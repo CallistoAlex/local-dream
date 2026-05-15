@@ -33,20 +33,7 @@ import androidx.compose.ui.unit.dp
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.utils.ImportedParams
 import io.github.xororz.localdream.utils.ParamShareField
-
-private fun schedulerDisplayName(id: String?): String = when (id) {
-    "dpm" -> "DPM++ 2M"
-    "dpm_karras" -> "DPM++ 2M Karras"
-    "euler_a" -> "Euler A"
-    "euler_a_karras" -> "Euler A Karras"
-    "lcm" -> "LCM"
-    "euler" -> "Euler"
-    "euler_karras" -> "Euler Karras"
-    "dpm_sde" -> "DPM++ 2M SDE"
-    "dpm_sde_karras" -> "DPM++ 2M SDE Karras"
-    null, "" -> ""
-    else -> id
-}
+import io.github.xororz.localdream.utils.schedulerDisplayName
 
 @Composable
 private fun fieldLabel(field: ParamShareField): String = when (field) {

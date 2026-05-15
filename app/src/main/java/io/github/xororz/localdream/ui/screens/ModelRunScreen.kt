@@ -43,8 +43,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -137,7 +135,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -175,9 +172,12 @@ import io.github.xororz.localdream.service.BackendService
 import io.github.xororz.localdream.service.BackgroundGenerationService
 import io.github.xororz.localdream.service.BackgroundGenerationService.GenerationState
 import io.github.xororz.localdream.service.ModelDownloadService
+import io.github.xororz.localdream.ui.components.GenerationParamsDialog
 import io.github.xororz.localdream.ui.components.ImportParametersDialog
+import io.github.xororz.localdream.ui.components.OverlayIconButton
 import io.github.xororz.localdream.ui.components.PromptTagTextField
 import io.github.xororz.localdream.ui.components.ShareParametersDialog
+import io.github.xororz.localdream.ui.components.ZoomableImageOverlay
 import io.github.xororz.localdream.utils.ImportedParams
 import io.github.xororz.localdream.utils.LogCapture
 import io.github.xororz.localdream.utils.ParamShare
@@ -528,9 +528,6 @@ fun ModelRunScreen(
     val isSecondPage by remember { derivedStateOf { pagerState.currentPage == 1 } }
 
     var isPreviewMode by remember { mutableStateOf(false) }
-    var scale by remember { mutableStateOf(1f) }
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
     val preferences = context.getSharedPreferences("app_prefs", Context.MODE_PRIVATE)
     val useImg2img = preferences.getBoolean("use_img2img", true)
     val enableTagAutocomplete = preferences.getBoolean("enable_tag_autocomplete", true)
@@ -2926,9 +2923,6 @@ fun ModelRunScreen(
                                         .clickable {
                                             if (currentBitmap != null) {
                                                 isPreviewMode = true
-                                                scale = 1f
-                                                offsetX = 0f
-                                                offsetY = 0f
                                             }
                                         },
                                     shape = MaterialTheme.shapes.medium,
@@ -3117,196 +3111,36 @@ fun ModelRunScreen(
                 )
             }
             if (showParametersDialog && generationParams != null) {
-                AlertDialog(
-                    onDismissRequest = { showParametersDialog = false },
-                    title = {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                stringResource(R.string.params_detail),
-                                modifier = Modifier.weight(1f)
-                            )
-                            IconButton(onClick = {
-                                shareSourceParams = generationParams
-                                shareSourceModelId = generationParamsModelId
-                            }) {
-                                Icon(
-                                    imageVector = Icons.Default.Share,
-                                    contentDescription = stringResource(R.string.share)
-                                )
-                            }
+                GenerationParamsDialog(
+                    title = stringResource(R.string.params_detail),
+                    params = generationParams!!,
+                    modelId = generationParamsModelId,
+                    showImg2imgButton = useImg2img,
+                    onShare = {
+                        shareSourceParams = generationParams
+                        shareSourceModelId = generationParamsModelId
+                    },
+                    onSendToImg2img = {
+                        val bmp = currentBitmap
+                        if (bmp != null) {
+                            sendBitmapToImg2img(bmp)
+                            showParametersDialog = false
+                        } else {
+                            Toast.makeText(
+                                context,
+                                "No image available",
+                                Toast.LENGTH_SHORT,
+                            ).show()
                         }
                     },
-                    text = {
-                        Column(
-                            modifier = Modifier
-                                .verticalScroll(rememberScrollState())
-                                .padding(vertical = 8.dp),
-                            verticalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            Column {
-                                Text(
-                                    stringResource(R.string.basic_params),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    stringResource(R.string.basic_model, generationParamsModelId),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    stringResource(
-                                        R.string.basic_step,
-                                        generationParams?.steps ?: 0
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    "CFG: %.1f".format(generationParams?.cfg),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    stringResource(
-                                        R.string.basic_size,
-                                        generationParams?.width ?: 0,
-                                        generationParams?.height ?: 0
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                generationParams?.seed?.let {
-                                    Text(
-                                        stringResource(R.string.basic_seed, it),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-                                Text(
-                                    stringResource(
-                                        R.string.basic_runtime,
-                                        if (generationParams?.runOnCpu == true) {
-                                            if (generationParams?.useOpenCL == true) "GPU" else "CPU"
-                                        } else "NPU"
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                Text(
-                                    "${stringResource(R.string.scheduler)}: ${
-                                        when (generationParams?.scheduler) {
-                                            "dpm" -> "DPM++ 2M"
-                                            "dpm_karras" -> "DPM++ 2M Karras"
-                                            "euler_a" -> "Euler A"
-                                            "euler_a_karras" -> "Euler A Karras"
-                                            "lcm" -> "LCM"
-                                            "euler" -> "Euler"
-                                            "euler_karras" -> "Euler Karras"
-                                            "dpm_sde" -> "DPM++ 2M SDE"
-                                            "dpm_sde_karras" -> "DPM++ 2M SDE Karras"
-                                            else -> generationParams?.scheduler ?: "DPM++ 2M"
-                                        }
-                                    }",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                generationParams?.mode?.let { m ->
-                                    if (m != GenerationMode.UNKNOWN) {
-                                        Text(
-                                            stringResource(R.string.basic_mode, m.name.lowercase()),
-                                            style = MaterialTheme.typography.bodyMedium
-                                        )
-                                        if (m != GenerationMode.TXT2IMG) {
-                                            Text(
-                                                stringResource(
-                                                    R.string.basic_denoise,
-                                                    generationParams?.denoiseStrength ?: 0.6f
-                                                ),
-                                                style = MaterialTheme.typography.bodyMedium
-                                            )
-                                        }
-                                    }
-                                }
-                                Text(
-                                    stringResource(
-                                        R.string.basic_time,
-                                        generationParams?.generationTime
-                                            ?: "unknown"
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-
-                            Column {
-                                Text(
-                                    stringResource(R.string.image_prompt),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    generationParams?.prompt ?: "",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-
-                            Column {
-                                Text(
-                                    stringResource(R.string.negative_prompt),
-                                    style = MaterialTheme.typography.titleSmall,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    generationParams?.negativePrompt ?: "",
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
+                    onReproduce = {
+                        generationParams?.let {
+                            pendingReproduceParams = it
+                            showParametersDialog = false
+                            showSeedConfirmDialog = true
                         }
                     },
-                    confirmButton = {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (useImg2img) {
-                                TextButton(
-                                    onClick = {
-                                        val bmp = currentBitmap
-                                        if (bmp != null) {
-                                            sendBitmapToImg2img(bmp)
-                                            showParametersDialog = false
-                                        } else {
-                                            Toast.makeText(
-                                                context,
-                                                "No image available",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    }
-                                ) {
-                                    Text("img2img")
-                                }
-                            } else {
-                                Spacer(modifier = Modifier.width(0.dp))
-                            }
-                            Row {
-                                TextButton(onClick = { showParametersDialog = false }) {
-                                    Text(stringResource(R.string.close))
-                                }
-                                TextButton(
-                                    onClick = {
-                                        generationParams?.let {
-                                            pendingReproduceParams = it
-                                            showParametersDialog = false
-                                            showSeedConfirmDialog = true
-                                        }
-                                    }
-                                ) {
-                                    Text(stringResource(R.string.reproduce))
-                                }
-                            }
-                        }
-                    }
+                    onDismiss = { showParametersDialog = false },
                 )
             }
         }
@@ -3773,140 +3607,18 @@ fun ModelRunScreen(
         }
     }
     if (isPreviewMode && currentBitmap != null) {
-        BackHandler {
-            scale = 1f
-            offsetX = 0f
-            offsetY = 0f
-            isPreviewMode = false
-        }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.9f))
-                .pointerInput(Unit) {
-                    detectTransformGestures { centroid, pan, zoom, _ ->
-                        val oldScale = scale
-                        scale = (scale * zoom).coerceIn(0.5f, 5f)
-
-                        val centerX = this.size.width / 2f
-                        val centerY = this.size.height / 2f
-
-                        val focusX = (centroid.x - centerX - offsetX) / oldScale
-                        val focusY = (centroid.y - centerY - offsetY) / oldScale
-
-                        offsetX += focusX * oldScale - focusX * scale
-                        offsetY += focusY * oldScale - focusY * scale
-
-                        offsetX += pan.x
-                        offsetY += pan.y
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { offset ->
-                            val centerX = this.size.width / 2f
-                            val centerY = this.size.height / 2f
-                            val imageSize = minOf(this.size.width, this.size.height).toFloat()
-                            val scaledImageSize = imageSize * scale
-
-                            val left = centerX - scaledImageSize / 2f + offsetX
-                            val top = centerY - scaledImageSize / 2f + offsetY
-                            val right = left + scaledImageSize
-                            val bottom = top + scaledImageSize
-
-                            if (offset.x < left || offset.x > right ||
-                                offset.y < top || offset.y > bottom
-                            ) {
-                                scale = 1f
-                                offsetX = 0f
-                                offsetY = 0f
-                                isPreviewMode = false
-                            }
-                        }
-                    )
-                }
-        ) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(currentBitmap!!)
-                    .size(coil.size.Size.ORIGINAL)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = "preview image",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                    .align(Alignment.Center)
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offsetX,
-                        translationY = offsetY
-                    )
-            )
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 60.dp, end = 16.dp)
-                    .size(40.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.5f),
-                        shape = CircleShape
-                    )
-                    .clickable {
-                        scale = 1f
-                        offsetX = 0f
-                        offsetY = 0f
-                        isPreviewMode = false
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
+        ZoomableImageOverlay(
+            bitmap = currentBitmap,
+            onDismiss = { isPreviewMode = false },
+            showScaleIndicator = true,
+            topEndContent = {
+                OverlayIconButton(
+                    icon = Icons.Default.Close,
                     contentDescription = "close preview",
-                    tint = Color.White
+                    onClick = { isPreviewMode = false },
                 )
-            }
-
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 16.dp)
-                    .size(40.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.5f),
-                        shape = CircleShape
-                    )
-                    .clickable {
-                        scale = 1f
-                        offsetX = 0f
-                        offsetY = 0f
-                    },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "reset zoom",
-                    tint = Color.White
-                )
-            }
-
-            Text(
-                text = "${(scale * 100).toInt()}%",
-                color = Color.White,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 16.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.5f),
-                        shape = MaterialTheme.shapes.extraSmall
-                    )
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-        }
+            },
+        )
     }
 
     // Upscaler dialog
@@ -4137,384 +3849,96 @@ fun ModelRunScreen(
 
     // History detail dialog
     if (showHistoryDetailDialog && selectedHistoryItem != null) {
-        var historyScale by remember { mutableStateOf(1f) }
-        var historyOffsetX by remember { mutableStateOf(0f) }
-        var historyOffsetY by remember { mutableStateOf(0f) }
-
-        // Load bitmap
         val historyBitmap = remember(selectedHistoryItem?.imageFile?.absolutePath) {
-            BitmapFactory.decodeFile(
-                selectedHistoryItem!!.imageFile.absolutePath
-            )
+            BitmapFactory.decodeFile(selectedHistoryItem!!.imageFile.absolutePath)
         }
-
-        BackHandler {
+        val dismissDetail = {
             showHistoryDetailDialog = false
             selectedHistoryItem = null
-            historyScale = 1f
-            historyOffsetX = 0f
-            historyOffsetY = 0f
         }
-
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.9f))
-                .pointerInput(Unit) {
-                    detectTransformGestures { centroid, pan, zoom, _ ->
-                        val oldScale = historyScale
-                        historyScale = (historyScale * zoom).coerceIn(0.5f, 5f)
-
-                        val centerX = this.size.width / 2f
-                        val centerY = this.size.height / 2f
-
-                        val focusX = (centroid.x - centerX - historyOffsetX) / oldScale
-                        val focusY = (centroid.y - centerY - historyOffsetY) / oldScale
-
-                        historyOffsetX += focusX * oldScale - focusX * historyScale
-                        historyOffsetY += focusY * oldScale - focusY * historyScale
-
-                        historyOffsetX += pan.x
-                        historyOffsetY += pan.y
-                    }
-                }
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { offset ->
-                            val centerX = this.size.width / 2f
-                            val centerY = this.size.height / 2f
-                            val imageSize = minOf(this.size.width, this.size.height).toFloat()
-                            val scaledImageSize = imageSize * historyScale
-
-                            val left = centerX - scaledImageSize / 2f + historyOffsetX
-                            val top = centerY - scaledImageSize / 2f + historyOffsetY
-                            val right = left + scaledImageSize
-                            val bottom = top + scaledImageSize
-
-                            if (offset.x < left || offset.x > right ||
-                                offset.y < top || offset.y > bottom
-                            ) {
-                                historyScale = 1f
-                                historyOffsetX = 0f
-                                historyOffsetY = 0f
-                                showHistoryDetailDialog = false
-                                selectedHistoryItem = null
+        ZoomableImageOverlay(
+            bitmap = historyBitmap,
+            onDismiss = dismissDetail,
+            topEndContent = {
+                OverlayIconButton(
+                    icon = Icons.Default.Info,
+                    contentDescription = "View parameters",
+                    onClick = {
+                        if (selectedHistoryItem != null) {
+                            showHistoryParametersDialog = true
+                        }
+                    },
+                )
+                OverlayIconButton(
+                    icon = Icons.Default.Save,
+                    contentDescription = "Save to gallery",
+                    onClick = {
+                        if (historyBitmap != null) {
+                            scope.launch {
+                                saveImage(
+                                    context = context,
+                                    bitmap = historyBitmap,
+                                    onSuccess = {
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(R.string.image_saved),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    },
+                                    onError = { errorMsg ->
+                                        Toast.makeText(
+                                            context,
+                                            errorMsg,
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                    },
+                                )
                             }
                         }
-                    )
-                }
-        ) {
-            // Image
-            if (historyBitmap != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(context)
-                        .data(historyBitmap)
-                        .size(coil.size.Size.ORIGINAL)
-                        .crossfade(true)
-                        .build(),
-                    contentDescription = "history image",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(1f, matchHeightConstraintsFirst = true)
-                        .align(Alignment.Center)
-                        .graphicsLayer(
-                            scaleX = historyScale,
-                            scaleY = historyScale,
-                            translationX = historyOffsetX,
-                            translationY = historyOffsetY
-                        )
-                )
-            }
-
-            // Top-right buttons
-            Row(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 60.dp, end = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // Info button
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            color = Color.Black.copy(alpha = 0.5f),
-                            shape = CircleShape
-                        )
-                        .clickable {
-                            if (selectedHistoryItem != null) {
-                                showHistoryParametersDialog = true
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Info,
-                        contentDescription = "View parameters",
-                        tint = Color.White
-                    )
-                }
-
-                // Save button
-                Box(
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            color = Color.Black.copy(alpha = 0.5f),
-                            shape = CircleShape
-                        )
-                        .clickable {
-                            if (historyBitmap != null) {
-                                scope.launch {
-                                    saveImage(
-                                        context = context,
-                                        bitmap = historyBitmap,
-                                        onSuccess = {
-                                            Toast.makeText(
-                                                context,
-                                                context.getString(R.string.image_saved),
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        },
-                                        onError = { errorMsg ->
-                                            Toast.makeText(
-                                                context,
-                                                errorMsg,
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    )
-                                }
-                            }
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Save,
-                        contentDescription = "Save to gallery",
-                        tint = Color.White
-                    )
-                }
-            }
-
-            // Reset zoom button at bottom-right
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 16.dp, bottom = 16.dp)
-                    .size(40.dp)
-                    .background(
-                        color = Color.Black.copy(alpha = 0.5f),
-                        shape = CircleShape
-                    )
-                    .clickable {
-                        historyScale = 1f
-                        historyOffsetX = 0f
-                        historyOffsetY = 0f
                     },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "reset zoom",
-                    tint = Color.White
                 )
-            }
-        }
+            },
+        )
     }
 
     // History parameters dialog
     if (showHistoryParametersDialog && selectedHistoryItem != null) {
         val params = selectedHistoryItem!!.params
-        if (params != null) {
-            AlertDialog(
-                onDismissRequest = { showHistoryParametersDialog = false },
-                title = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            stringResource(R.string.generation_params_title),
-                            modifier = Modifier.weight(1f)
-                        )
-                        IconButton(onClick = {
-                            shareSourceParams = params
-                            shareSourceModelId = selectedHistoryItem?.modelId
-                        }) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = stringResource(R.string.share)
-                            )
-                        }
-                    }
-                },
-                text = {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.verticalScroll(rememberScrollState())
-                    ) {
-                        Column {
-                            Text(
-                                stringResource(
-                                    R.string.basic_model,
-                                    selectedHistoryItem?.modelId ?: ""
-                                ),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "Steps: ${params.steps}",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "CFG: %.1f".format(params.cfg),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                stringResource(
-                                    R.string.basic_size,
-                                    params.width,
-                                    params.height
-                                ),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            params.seed?.let {
-                                Text(
-                                    stringResource(R.string.basic_seed, it),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                            }
-                            Text(
-                                stringResource(
-                                    R.string.basic_runtime,
-                                    if (params.runOnCpu) {
-                                        if (params.useOpenCL) "GPU" else "CPU"
-                                    } else "NPU"
-                                ),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            Text(
-                                "${stringResource(R.string.scheduler)}: ${
-                                    when (params.scheduler) {
-                                        "dpm" -> "DPM++ 2M"
-                                        "dpm_karras" -> "DPM++ 2M Karras"
-                                        "euler_a" -> "Euler A"
-                                        "euler_a_karras" -> "Euler A Karras"
-                                        "lcm" -> "LCM"
-                                        "euler" -> "Euler"
-                                        "euler_karras" -> "Euler Karras"
-                                        "dpm_sde" -> "DPM++ 2M SDE"
-                                        "dpm_sde_karras" -> "DPM++ 2M SDE Karras"
-                                        else -> params.scheduler
-                                    }
-                                }",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            val itemMode = selectedHistoryItem?.mode ?: params.mode
-                            if (itemMode != GenerationMode.UNKNOWN) {
-                                Text(
-                                    stringResource(R.string.basic_mode, itemMode.name.lowercase()),
-                                    style = MaterialTheme.typography.bodyMedium
-                                )
-                                if (itemMode != GenerationMode.TXT2IMG) {
-                                    Text(
-                                        stringResource(
-                                            R.string.basic_denoise,
-                                            params.denoiseStrength
-                                        ),
-                                        style = MaterialTheme.typography.bodyMedium
-                                    )
-                                }
-                            }
-                            Text(
-                                stringResource(
-                                    R.string.basic_time,
-                                    params.generationTime ?: "unknown"
-                                ),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-
-                        Column {
-                            Text(
-                                stringResource(R.string.image_prompt),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                params.prompt,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-
-                        Column {
-                            Text(
-                                stringResource(R.string.negative_prompt),
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                params.negativePrompt,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-                },
-                confirmButton = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (useImg2img) {
-                            TextButton(
-                                onClick = {
-                                    val item = selectedHistoryItem
-                                    if (item != null) {
-                                        val bmp = BitmapFactory.decodeFile(
-                                            item.imageFile.absolutePath
-                                        )
-                                        if (bmp != null) {
-                                            sendBitmapToImg2img(bmp)
-                                            showHistoryParametersDialog = false
-                                            showHistoryDetailDialog = false
-                                            selectedHistoryItem = null
-                                        } else {
-                                            Toast.makeText(
-                                                context,
-                                                "Failed to load image",
-                                                Toast.LENGTH_SHORT
-                                            ).show()
-                                        }
-                                    }
-                                }
-                            ) {
-                                Text("img2img")
-                            }
-                        } else {
-                            Spacer(modifier = Modifier.width(0.dp))
-                        }
-                        Row {
-                            TextButton(onClick = { showHistoryParametersDialog = false }) {
-                                Text(stringResource(R.string.close))
-                            }
-                            TextButton(
-                                onClick = {
-                                    pendingReproduceParams =
-                                        selectedHistoryItem!!.params
-                                    showHistoryParametersDialog = false
-                                    showSeedConfirmDialog = true
-                                }
-                            ) {
-                                Text(stringResource(R.string.reproduce))
-                            }
-                        }
+        GenerationParamsDialog(
+            title = stringResource(R.string.generation_params_title),
+            params = params,
+            modelId = selectedHistoryItem?.modelId ?: "",
+            displayMode = selectedHistoryItem?.mode,
+            showImg2imgButton = useImg2img,
+            onShare = {
+                shareSourceParams = params
+                shareSourceModelId = selectedHistoryItem?.modelId
+            },
+            onSendToImg2img = {
+                val item = selectedHistoryItem
+                if (item != null) {
+                    val bmp = BitmapFactory.decodeFile(item.imageFile.absolutePath)
+                    if (bmp != null) {
+                        sendBitmapToImg2img(bmp)
+                        showHistoryParametersDialog = false
+                        showHistoryDetailDialog = false
+                        selectedHistoryItem = null
+                    } else {
+                        Toast.makeText(
+                            context,
+                            "Failed to load image",
+                            Toast.LENGTH_SHORT,
+                        ).show()
                     }
                 }
-            )
-        }
+            },
+            onReproduce = {
+                pendingReproduceParams = selectedHistoryItem!!.params
+                showHistoryParametersDialog = false
+                showSeedConfirmDialog = true
+            },
+            onDismiss = { showHistoryParametersDialog = false },
+        )
     }
 
     // Seed confirmation dialog for reproduce

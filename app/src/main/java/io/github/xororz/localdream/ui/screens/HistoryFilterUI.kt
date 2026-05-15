@@ -53,23 +53,11 @@ import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.DeviceFilter
 import io.github.xororz.localdream.data.GenerationMode
 import io.github.xororz.localdream.data.HistoryFilter
+import io.github.xororz.localdream.utils.schedulerDisplayName
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-
-private fun schedulerDisplayName(id: String): String = when (id) {
-    "dpm" -> "DPM++ 2M"
-    "dpm_karras" -> "DPM++ 2M Karras"
-    "euler_a" -> "Euler A"
-    "euler_a_karras" -> "Euler A Karras"
-    "lcm" -> "LCM"
-    "euler" -> "Euler"
-    "euler_karras" -> "Euler Karras"
-    "dpm_sde" -> "DPM++ 2M SDE"
-    "dpm_sde_karras" -> "DPM++ 2M SDE Karras"
-    else -> id
-}
 
 @Composable
 fun HistoryFilterBar(
@@ -183,7 +171,7 @@ fun HistoryFilterSheet(
                 }
             }
 
-            if (knownModelIds.isNotEmpty() || knownSizes.isNotEmpty()) {
+            if (knownModelIds.isNotEmpty() || knownSizes.isNotEmpty() || knownSchedulers.isNotEmpty()) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(24.dp),
@@ -210,6 +198,19 @@ fun HistoryFilterSheet(
                                 onClick = { showSizePicker = true },
                                 label = {
                                     Text(summaryLabel(draft.sizes, knownSizes.size))
+                                },
+                            )
+                        }
+                    }
+                    if (knownSchedulers.isNotEmpty()) {
+                        Section(
+                            title = stringResource(R.string.history_filter_scheduler),
+                            modifier = Modifier,
+                        ) {
+                            AssistChip(
+                                onClick = { showSchedulerPicker = true },
+                                label = {
+                                    Text(summaryLabel(draft.schedulers, knownSchedulers.size))
                                 },
                             )
                         }
@@ -242,17 +243,6 @@ fun HistoryFilterSheet(
                             Text(stringResource(R.string.history_filter_reset))
                         }
                     }
-                }
-            }
-
-            if (knownSchedulers.isNotEmpty()) {
-                Section(stringResource(R.string.history_filter_scheduler)) {
-                    AssistChip(
-                        onClick = { showSchedulerPicker = true },
-                        label = {
-                            Text(summaryLabel(draft.schedulers, knownSchedulers.size))
-                        },
-                    )
                 }
             }
 
