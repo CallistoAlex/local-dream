@@ -168,6 +168,9 @@
     <string name="deleted_count_with_failed" tools:ignore="PluralsCandidate">Successfully deleted %1$d items, failed %2$d items</string>
     <string name="confirm_exit">Confirm to Exit</string>
     <string name="confirm_exit_hint">Generation in progress, Are you sure to Exit?</string>
+    <string name="interrupt_generation">Interrupt Generation</string>
+    <string name="interrupt_generation_hint">Generation in progress. Interrupt it?</string>
+    <string name="generation_interrupted">Generation interrupted</string>
     <string name="reset">Reset</string>
     <string name="reset_hint">Reset all parameters? This action cannot be undone. </string>
     <string name="media_permission_hint">Media permission is needed for img2img generation</string>

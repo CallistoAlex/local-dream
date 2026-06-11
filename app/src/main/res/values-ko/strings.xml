@@ -159,6 +159,9 @@
     <string name="deleted_count_with_failed" tools:ignore="PluralsCandidate">%1$d개 항목 삭제 성공, %2$d개 실패</string>
     <string name="confirm_exit">종료 확인</string>
     <string name="confirm_exit_hint">생성이 진행 중입니다. 종료하면 현재 생성이 중단됩니다. 종료하시겠습니까?</string>
+    <string name="interrupt_generation">생성 중단</string>
+    <string name="interrupt_generation_hint">생성이 진행 중입니다. 중단하시겠습니까?</string>
+    <string name="generation_interrupted">생성이 중단되었습니다</string>
     <string name="reset">초기화</string>
     <string name="reset_hint">모든 파라미터를 초기화하시겠습니까? 이 작업은 되돌릴 수 없습니다.</string>
     <string name="media_permission_hint">img2img 생성에는 미디어 권한이 필요합니다</string>

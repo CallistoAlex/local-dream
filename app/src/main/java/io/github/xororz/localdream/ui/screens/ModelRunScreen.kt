@@ -282,6 +282,7 @@ fun ModelRunScreen(modelId: String, navController: NavController, modifier: Modi
 
     var showResetConfirmDialog by remember { mutableStateOf(false) }
     var showOpenCLWarningDialog by remember { mutableStateOf(false) }
+    var showInterruptDialog by remember { mutableStateOf(false) }
 
     var currentBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var intermediateBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -362,7 +363,6 @@ fun ModelRunScreen(modelId: String, navController: NavController, modifier: Modi
     var progress by remember { mutableFloatStateOf(0f) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var isCheckingBackend by remember { mutableStateOf(true) }
-    var showExitDialog by remember { mutableStateOf(false) }
     var showParametersDialog by remember { mutableStateOf(false) }
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 3 })
     var generationStartTime by remember { mutableStateOf<Long?>(null) }
@@ -951,7 +951,7 @@ fun ModelRunScreen(modelId: String, navController: NavController, modifier: Modi
         try {
             currentBitmap = null
             generationParams = null
-            context.sendBroadcast(Intent(BackgroundGenerationService.ACTION_STOP))
+            BackgroundGenerationService.stop(context)
             val backendServiceIntent = Intent(context, BackendService::class.java)
             context.stopService(backendServiceIntent)
             isRunning = false
@@ -974,6 +974,25 @@ fun ModelRunScreen(modelId: String, navController: NavController, modifier: Modi
         cleanup()
         BackgroundGenerationService.clearCompleteState()
         navController.navigateUp()
+    }
+
+    // Stops the in-flight generation (single or batch) but keeps the backend
+    // and the screen alive, so the user can immediately generate again.
+    fun interruptGeneration() {
+        batchGenerationJob?.cancel()
+        batchGenerationJob = null
+        BackgroundGenerationService.stop(context)
+        BackgroundGenerationService.resetState()
+        intermediateBitmap = null
+        isRunning = false
+        progress = 0f
+        currentBatchIndex = 0
+        generationStartTime = null
+        Toast.makeText(
+            context,
+            context.getString(R.string.generation_interrupted),
+            Toast.LENGTH_SHORT,
+        ).show()
     }
 
     DisposableEffect(modelId) {
@@ -1202,21 +1221,23 @@ fun ModelRunScreen(modelId: String, navController: NavController, modifier: Modi
         }
     }
 
-    // Only intercept back when a generation is running, so the predictive back
-    // gesture can show NavHost's peek of the previous destination in idle state.
+    // Only intercept back while a generation is running: back then offers to
+    // interrupt the generation and stays on the screen (a second back exits).
+    // In idle state the predictive back gesture can show NavHost's peek of
+    // the previous destination.
     if (isRunning) {
-        BackHandler { showExitDialog = true }
+        BackHandler { showInterruptDialog = true }
     }
 
-    if (showExitDialog) {
+    if (showInterruptDialog) {
         ModelRunConfirmDialog(
-            title = stringResource(R.string.confirm_exit),
-            text = stringResource(R.string.confirm_exit_hint),
+            title = stringResource(R.string.interrupt_generation),
+            text = stringResource(R.string.interrupt_generation_hint),
             onConfirm = {
-                showExitDialog = false
-                handleExit()
+                showInterruptDialog = false
+                interruptGeneration()
             },
-            onDismiss = { showExitDialog = false },
+            onDismiss = { showInterruptDialog = false },
         )
     }
     if (showOpenCLWarningDialog) {
@@ -2066,7 +2087,7 @@ fun ModelRunScreen(modelId: String, navController: NavController, modifier: Modi
                     navigationIcon = {
                         IconButton(onClick = {
                             if (isRunning) {
-                                showExitDialog = true
+                                showInterruptDialog = true
                             } else {
                                 handleExit()
                             }

@@ -159,6 +159,9 @@
     <string name="deleted_count_with_failed" tools:ignore="PluralsCandidate">成功删除 %1$d 项，失败 %2$d 项</string>
     <string name="confirm_exit">确定退出</string>
     <string name="confirm_exit_hint">图片正在生成中，确定要退出吗？</string>
+    <string name="interrupt_generation">中断生成</string>
+    <string name="interrupt_generation_hint">图片正在生成中，确定要中断吗？</string>
+    <string name="generation_interrupted">已中断生成</string>
     <string name="reset">恢复默认参数</string>
     <string name="reset_hint">确定要将所有参数（包括提示词）恢复为默认值吗？此操作不可撤销。</string>
     <string name="media_permission_hint">img2img功能需要媒体权限</string>

@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.IBinder
 import android.os.SystemClock
 import android.util.Log
@@ -32,6 +33,15 @@ class BackgroundGenerationService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
     private val notificationManager by lazy { getSystemService(NOTIFICATION_SERVICE) as NotificationManager }
     private var lastProgressNotifyAt = 0L
+
+    // In-flight /generate call; cancelled by ACTION_STOP. Cancelling closes the
+    // socket, which the backend detects at the next progress event and aborts
+    // the generation instead of computing a result nobody will read.
+    @Volatile
+    private var activeCall: okhttp3.Call? = null
+
+    @Volatile
+    private var cancelRequested = false
 
     companion object {
         private const val CHANNEL_ID = "image_generation_channel"
@@ -72,6 +82,14 @@ class BackgroundGenerationService : Service() {
         fun markBitmapConsumed() {
             _bitmapConsumed.value = true
         }
+
+        /** Interrupts the in-flight generation (if any) and stops the service. */
+        fun stop(context: Context) {
+            context.startService(
+                Intent(context, BackgroundGenerationService::class.java)
+                    .setAction(ACTION_STOP),
+            )
+        }
     }
 
     sealed class GenerationState {
@@ -100,7 +118,10 @@ class BackgroundGenerationService : Service() {
 
         when (intent?.action) {
             ACTION_STOP -> {
-                Log.d("GenerationService", "service stopped")
+                Log.d("GenerationService", "generation interrupted by user")
+                cancelRequested = true
+                activeCall?.cancel()
+                updateState(GenerationState.Idle)
                 stopSelf()
                 return START_NOT_STICKY
             }
@@ -172,6 +193,7 @@ class BackgroundGenerationService : Service() {
             updateState(GenerationState.Idle)
         }
         _bitmapConsumed.value = false
+        cancelRequested = false
 
         serviceScope.launch {
             Log.d("GenerationService", "start generation")
@@ -214,6 +236,9 @@ class BackgroundGenerationService : Service() {
         scheduler: String,
         aspectRatio: String,
     ) = withContext(Dispatchers.IO) {
+        // Set once the complete event is fully handled; a socket teardown
+        // racing the service shutdown after that point is not an error.
+        var completed = false
         try {
             updateState(GenerationState.Progress(0f))
 
@@ -227,7 +252,9 @@ class BackgroundGenerationService : Service() {
                 put("negative_prompt", negativePrompt)
                 put("steps", steps)
                 put("cfg", cfg)
-                put("use_cfg", true)
+                // Per-step previews come back as base64 JPEG (tiny) instead of
+                // raw RGB; the final image stays raw (lossless, loopback-cheap).
+                put("preview_format", "jpeg")
                 put("width", width)
                 put("height", height)
                 put("denoise_strength", denoiseStrength)
@@ -246,7 +273,9 @@ class BackgroundGenerationService : Service() {
                 .post(jsonObject.toString().toRequestBody("application/json".toMediaTypeOrNull()))
                 .build()
 
-            generationClient.newCall(request).execute().use { response ->
+            val call = generationClient.newCall(request)
+            activeCall = call
+            call.execute().use { response ->
                 if (!response.isSuccessful) {
                     throw IOException(
                         this@BackgroundGenerationService.getString(
@@ -267,7 +296,7 @@ class BackgroundGenerationService : Service() {
                     var previewPixels: IntArray? = null
 
                     // Read line by line for efficiency
-                    while (isActive) {
+                    readLoop@ while (isActive) {
                         val readLineStart = System.currentTimeMillis()
                         val line = reader.readLine() ?: break
                         val readLineTime = System.currentTimeMillis() - readLineStart
@@ -292,28 +321,29 @@ class BackgroundGenerationService : Service() {
                                     if (b64Img.isNotEmpty()) {
                                         try {
                                             val imageBytes = Base64.getDecoder().decode(b64Img)
-                                            // Progress previews are cropped to (effectiveWidth,
-                                            // effectiveHeight) by the backend so the SDXL aspect-pad
-                                            // path doesn't ship the 1024 canvas every step.
-                                            val pw = effectiveWidth
-                                            val ph = effectiveHeight
-                                            val pixels = previewPixels
-                                                ?.takeIf { it.size == pw * ph }
-                                                ?: IntArray(pw * ph).also {
-                                                    previewPixels = it
+                                            bitmap = if (message.optString("format", "raw") == "raw") {
+                                                // Progress previews are cropped to (effectiveWidth,
+                                                // effectiveHeight) by the backend so the SDXL aspect-pad
+                                                // path doesn't ship the 1024 canvas every step.
+                                                val pw = effectiveWidth
+                                                val ph = effectiveHeight
+                                                val pixels = previewPixels
+                                                    ?.takeIf { it.size == pw * ph }
+                                                    ?: IntArray(pw * ph).also {
+                                                        previewPixels = it
+                                                    }
+                                                rgbBytesToPixels(imageBytes, pixels)
+                                                createBitmap(pw, ph).also {
+                                                    it.setPixels(pixels, 0, pw, 0, 0, pw, ph)
                                                 }
-                                            for (i in 0 until pw * ph) {
-                                                val index = i * 3
-                                                if (index + 2 < imageBytes.size) {
-                                                    val r = imageBytes[index].toInt() and 0xFF
-                                                    val g = imageBytes[index + 1].toInt() and 0xFF
-                                                    val b = imageBytes[index + 2].toInt() and 0xFF
-                                                    pixels[i] =
-                                                        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                                                }
+                                            } else {
+                                                // jpeg/png: native decode.
+                                                BitmapFactory.decodeByteArray(
+                                                    imageBytes,
+                                                    0,
+                                                    imageBytes.size,
+                                                )
                                             }
-                                            bitmap = createBitmap(pw, ph)
-                                            bitmap.setPixels(pixels, 0, pw, 0, 0, pw, ph)
                                         } catch (e: Exception) {
                                             Log.e(
                                                 "BgGenService",
@@ -368,26 +398,24 @@ class BackgroundGenerationService : Service() {
 
                                     // 3. RGB conversion + Bitmap creation
                                     val bitmapStartTime = System.currentTimeMillis()
-                                    val bitmap = createBitmap(resultWidth, resultHeight)
-                                    val pixels = IntArray(resultWidth * resultHeight)
-
-                                    for (i in 0 until resultWidth * resultHeight) {
-                                        val index = i * 3
-                                        val r = imageBytes[index].toInt() and 0xFF
-                                        val g = imageBytes[index + 1].toInt() and 0xFF
-                                        val b = imageBytes[index + 2].toInt() and 0xFF
-                                        pixels[i] =
-                                            (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                                    val bitmap = if (message.optString("format", "raw") == "raw") {
+                                        val pixels = IntArray(resultWidth * resultHeight)
+                                        rgbBytesToPixels(imageBytes, pixels)
+                                        createBitmap(resultWidth, resultHeight).also {
+                                            it.setPixels(
+                                                pixels,
+                                                0,
+                                                resultWidth,
+                                                0,
+                                                0,
+                                                resultWidth,
+                                                resultHeight,
+                                            )
+                                        }
+                                    } else {
+                                        BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                                            ?: throw IOException("Failed to decode result image")
                                     }
-                                    bitmap.setPixels(
-                                        pixels,
-                                        0,
-                                        resultWidth,
-                                        0,
-                                        0,
-                                        resultWidth,
-                                        resultHeight,
-                                    )
                                     Log.d(
                                         "BgGenService",
                                         "RGB conversion + Bitmap creation took: ${System.currentTimeMillis() - bitmapStartTime}ms",
@@ -426,7 +454,13 @@ class BackgroundGenerationService : Service() {
                                         "BgGenService",
                                         "Bitmap consumed, stopping service. Wait time: ${System.currentTimeMillis() - waitStartTime}ms",
                                     )
+                                    completed = true
                                     stopSelf()
+                                    // The stream carries nothing after complete; leaving
+                                    // the loop here avoids a blocked readLine() racing the
+                                    // service shutdown (stopSelf -> onDestroy cancels the
+                                    // call, which would surface as "Socket closed").
+                                    break@readLoop
                                 }
 
                                 "error" -> {
@@ -444,13 +478,39 @@ class BackgroundGenerationService : Service() {
                 }
             }
         } catch (e: Exception) {
-            Log.e("GenerationService", "generation error", e)
-            updateState(
-                GenerationState.Error(
-                    e.message ?: this@BackgroundGenerationService.getString(R.string.unknown_error),
-                ),
-            )
+            if (completed) {
+                // Result already delivered; a teardown exception from the
+                // closing socket must not overwrite the Complete state.
+                Log.d("GenerationService", "post-completion teardown: ${e.message}")
+            } else if (cancelRequested) {
+                // User interrupted: the cancelled call throws on its blocked
+                // read; this is the expected exit, not an error.
+                Log.d("GenerationService", "generation cancelled")
+                updateState(GenerationState.Idle)
+            } else {
+                Log.e("GenerationService", "generation error", e)
+                updateState(
+                    GenerationState.Error(
+                        e.message ?: this@BackgroundGenerationService.getString(R.string.unknown_error),
+                    ),
+                )
+            }
             stopSelf()
+        } finally {
+            activeCall = null
+        }
+    }
+
+    // Expands packed RGB bytes into ARGB ints; stops at whichever buffer ends
+    // first so a short payload can never index out of bounds.
+    private fun rgbBytesToPixels(rgb: ByteArray, pixels: IntArray) {
+        val count = minOf(pixels.size, rgb.size / 3)
+        for (i in 0 until count) {
+            val index = i * 3
+            val r = rgb[index].toInt() and 0xFF
+            val g = rgb[index + 1].toInt() and 0xFF
+            val b = rgb[index + 2].toInt() and 0xFF
+            pixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
     }
 
@@ -515,6 +575,7 @@ class BackgroundGenerationService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        activeCall?.cancel()
         serviceScope.cancel()
 
         if (_generationState.value is GenerationState.Error) {

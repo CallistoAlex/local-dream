@@ -147,6 +147,9 @@
     <string name="deleted_count_with_failed" tools:ignore="PluralsCandidate">%1$d 個のアイテムを正常に削除しましたが、%2$d 個のアイテムは削除できませんでした</string>
     <string name="confirm_exit">閉じてよろしいですか？</string>
     <string name="confirm_exit_hint">生成中です。終了してもよろしいですか?</string>
+    <string name="interrupt_generation">生成を中断</string>
+    <string name="interrupt_generation_hint">生成中です。中断してもよろしいですか?</string>
+    <string name="generation_interrupted">生成を中断しました</string>
     <string name="reset">リセット</string>
     <string name="reset_hint">すべてのパラメータをリセットしますか? この操作は元に戻せません。</string>
     <string name="media_permission_hint">img2img生成にはメディア許可が必要です</string>
