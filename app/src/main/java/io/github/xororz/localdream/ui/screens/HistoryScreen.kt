@@ -420,15 +420,8 @@ fun HistoryScreen(navController: NavController) {
                 showBatchDeleteDialog = false
                 scope.launch {
                     val itemsToDelete = historyManager.getItems(ids)
-                    var successCount = 0
-                    var failCount = ids.size - itemsToDelete.size
-                    itemsToDelete.forEach { item ->
-                        if (historyManager.deleteHistoryItem(item)) {
-                            successCount++
-                        } else {
-                            failCount++
-                        }
-                    }
+                    val successCount = historyManager.deleteHistoryItems(itemsToDelete)
+                    val failCount = ids.size - successCount
                     selectedIds.clear()
                     isSelectionMode = false
 

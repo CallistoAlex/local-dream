@@ -8,6 +8,7 @@ import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
 import androidx.paging.map
+import androidx.room.withTransaction
 import io.github.xororz.localdream.data.db.AppDatabase
 import io.github.xororz.localdream.data.db.HistoryEntity
 import io.github.xororz.localdream.ui.screens.GenerationParameters
@@ -61,9 +62,13 @@ data class HistoryItem(
     }
 }
 
+// Keep id batches under SQLite's host-parameter limit (999 on older API levels).
+private const val SQLITE_IN_CHUNK = 900
+
 class HistoryManager(private val context: Context) {
 
-    private val dao = AppDatabase.get(context).historyDao()
+    private val db = AppDatabase.get(context)
+    private val dao = db.historyDao()
     private val filesDir: File = context.filesDir
 
     private fun getHistoryDir(modelId: String): File {
@@ -188,7 +193,11 @@ class HistoryManager(private val context: Context) {
     // in the requested id order so callers can rely on it.
     suspend fun getItems(ids: Collection<Long>): List<HistoryItem> = withContext(Dispatchers.IO) {
         try {
-            val byId = dao.getByIds(ids.toList())
+            // Chunk the IN clause so large select-all sets stay under SQLite's
+            // host-parameter limit (999 on older API levels).
+            val byId = ids.toList()
+                .chunked(SQLITE_IN_CHUNK)
+                .flatMap { dao.getByIds(it) }
                 .associateBy { it.id }
             ids.mapNotNull { byId[it]?.let { e -> HistoryItem.fromEntity(filesDir, e) } }
         } catch (e: Exception) {
@@ -209,6 +218,30 @@ class HistoryManager(private val context: Context) {
         } catch (e: Exception) {
             Log.e("HistoryManager", "Failed to delete history item", e)
             false
+        }
+    }
+
+    // Batch delete. All DB rows are removed inside a single transaction so the
+    // paging source is invalidated exactly once, on commit - deleting row by row
+    // races the Paging refresh and leaves just-deleted thumbnails rendered until
+    // some later, unrelated change refreshes the grid. Image files are removed
+    // best-effort afterwards; a file that won't delete doesn't fail the row.
+    // Returns the number of rows successfully deleted.
+    suspend fun deleteHistoryItems(items: List<HistoryItem>): Int = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext 0
+        try {
+            db.withTransaction {
+                items.map { it.id }
+                    .chunked(SQLITE_IN_CHUNK)
+                    .forEach { dao.deleteByIds(it) }
+            }
+            items.forEach { item ->
+                if (item.imageFile.exists()) item.imageFile.delete()
+            }
+            items.size
+        } catch (e: Exception) {
+            Log.e("HistoryManager", "Failed to delete history items", e)
+            0
         }
     }
 
