@@ -9,6 +9,7 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import io.github.xororz.localdream.R
+import io.github.xororz.localdream.data.Model
 import io.github.xororz.localdream.utils.Http
 import java.io.File
 import java.io.FileOutputStream
@@ -156,13 +157,17 @@ class ModelDownloadService : Service() {
                         val upscalerDir = File(getModelsDir(), modelId).apply {
                             if (!exists()) mkdirs()
                         }
-                        val targetFile = File(upscalerDir, "upscaler.bin")
+                        val targetFile = File(upscalerDir, Model.UPSCALER_FILE_NAME)
 
                         if (targetFile.exists()) {
                             targetFile.delete()
                         }
 
-                        tempFile.renameTo(targetFile)
+                        // Don't report success on a failed move: it would leave
+                        // an empty model dir that the UI/loader can't use.
+                        if (!tempFile.renameTo(targetFile)) {
+                            tempFile.copyTo(targetFile, overwrite = true)
+                        }
                     }
                 }
 
@@ -242,6 +247,14 @@ class ModelDownloadService : Service() {
                         }
                     }
                 }
+            }
+
+            // Guard against silently truncated downloads: a dropped connection
+            // ends the read loop without throwing, leaving a partial file.
+            if (totalBytes > 0 && downloadedBytes != totalBytes) {
+                throw Exception(
+                    getString(R.string.error_download_failed, "$downloadedBytes/$totalBytes"),
+                )
             }
         }
     }

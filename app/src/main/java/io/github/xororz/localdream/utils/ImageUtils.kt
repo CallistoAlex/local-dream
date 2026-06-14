@@ -58,7 +58,7 @@ suspend fun performUpscale(context: Context, bitmap: Bitmap, upscalerId: String)
 
     // Get upscaler model path
     val upscalerModelsDir = File(Model.getModelsDir(context), upscalerId)
-    val upscalerFile = File(upscalerModelsDir, "upscaler.bin")
+    val upscalerFile = File(upscalerModelsDir, Model.UPSCALER_FILE_NAME)
 
     if (!upscalerFile.exists()) {
         throw Exception("Upscaler model file not found: ${upscalerFile.absolutePath}")

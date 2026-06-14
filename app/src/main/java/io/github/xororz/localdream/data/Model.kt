@@ -212,6 +212,15 @@ data class Model(
             return files != null && files.isNotEmpty()
         }
 
+        // Upscalers store a single raw weight file; existence must match what
+        // performUpscale() actually loads, not just a non-empty directory.
+        const val UPSCALER_FILE_NAME = "upscaler.bin"
+
+        fun isUpscalerDownloaded(context: Context, upscalerId: String): Boolean {
+            val file = File(File(getModelsDir(context), upscalerId), UPSCALER_FILE_NAME)
+            return file.exists() && file.length() > 0
+        }
+
         fun needsModelUpgrade(context: Context, modelId: String, isNpu: Boolean): Boolean {
             if (!isNpu) return false
 
@@ -282,7 +291,7 @@ class UpscalerRepository private constructor(private val context: Context) {
         val fileUri =
             "xororz/upscaler/resolve/main/realesrgan_x4plus_anime_6b/upscaler_$suffix.bin"
 
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
+        val isDownloaded = Model.isUpscalerDownloaded(context, id)
 
         return UpscalerModel(
             id = id,
@@ -298,7 +307,7 @@ class UpscalerRepository private constructor(private val context: Context) {
         val id = "upscaler_realistic"
         val fileUri = "xororz/upscaler/resolve/main/4x_UltraSharpV2_Lite/upscaler_$suffix.bin"
 
-        val isDownloaded = Model.isModelDownloaded(context, id, false)
+        val isDownloaded = Model.isUpscalerDownloaded(context, id)
 
         return UpscalerModel(
             id = id,
@@ -316,7 +325,7 @@ class UpscalerRepository private constructor(private val context: Context) {
             upscalers = withContext(Dispatchers.IO) {
                 current.map { upscaler ->
                     if (upscaler.id == upscalerId) {
-                        val isDownloaded = Model.isModelDownloaded(context, upscaler.id, false)
+                        val isDownloaded = Model.isUpscalerDownloaded(context, upscaler.id)
                         upscaler.copy(isDownloaded = isDownloaded)
                     } else {
                         upscaler
