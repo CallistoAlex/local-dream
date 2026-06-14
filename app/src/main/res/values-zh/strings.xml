@@ -304,7 +304,7 @@
 
     <!-- UltraFix -->
     <string name="ultrafix">UltraFix</string>
-    <string name="ultrafix_confirm_hint">UltraFix 会用分块 img2img 对整张图片做精修。建议去噪强度不超过 0.5。处理耗时较长，请勿在设备过热时使用。</string>
+    <string name="ultrafix_confirm_hint">UltraFix 会用分块 img2img 对整张图片做精修。建议 denoise steps / steps 的比值不超过 0.5。建议仅在动漫模型上使用，且只对你最喜欢的图像进行修复。处理耗时较长，请勿在设备过热时使用。</string>
     <string name="ultrafix_seed_random">随机</string>
     <string name="ultrafix_denoise_steps_label">去噪步数: %d</string>
     <string name="ultrafix_source_info">图像: %1$dx%2$d  ·  分块: %3$dpx</string>

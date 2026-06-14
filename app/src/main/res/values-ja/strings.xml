@@ -304,7 +304,7 @@
 
     <!-- UltraFix -->
     <string name="ultrafix">UltraFix</string>
-    <string name="ultrafix_confirm_hint">UltraFix はタイル分割した img2img で画像全体を精細化します。ノイズ除去強度は 0.5 以下を推奨します。処理に時間がかかるため、デバイスが高温のときは使用しないでください。</string>
+    <string name="ultrafix_confirm_hint">UltraFix はタイル分割した img2img で画像全体を精細化します。denoise steps / steps の比率は 0.5 以下を推奨します。アニメ系モデルでの利用が最適なので、それらのモデルでお気に入りの画像にのみ使用してください。処理に時間がかかるため、デバイスが高温のときは使用しないでください。</string>
     <string name="ultrafix_seed_random">ランダム</string>
     <string name="ultrafix_denoise_steps_label">ノイズ除去ステップ: %d</string>
     <string name="ultrafix_source_info">画像: %1$dx%2$d  ·  タイル: %3$dpx</string>

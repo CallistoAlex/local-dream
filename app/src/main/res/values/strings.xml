@@ -314,7 +314,7 @@
 
     <!-- UltraFix -->
     <string name="ultrafix">UltraFix</string>
-    <string name="ultrafix_confirm_hint">UltraFix refines this image with tiled img2img. A denoise strength of 0.5 or lower is recommended. Processing takes a long time; avoid running it while the device is hot.</string>
+    <string name="ultrafix_confirm_hint">UltraFix refines this image with tiled img2img. A denoise steps / steps ratio of 0.5 or lower is recommended. It works best on anime models, so use it only on those, and only on your favorite images. Processing takes a long time; avoid running it while the device is hot.</string>
     <string name="ultrafix_seed_random">Random</string>
     <string name="ultrafix_denoise_steps_label">Denoise steps: %d</string>
     <string name="ultrafix_source_info">Image: %1$dx%2$d  ·  Tile: %3$dpx</string>
