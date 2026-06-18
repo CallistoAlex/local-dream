@@ -1,0 +1,33 @@
+# Batch conversion example — edit paths before running
+# Usage: ld-convert convert --config examples/batch.yaml
+
+- vendor: qualcomm
+  kind: sd15
+  model_path: /data/models/AnythingV5.safetensors
+  model_name: AnythingV5
+  output_dir: ./output
+  clip_skip: 2
+  soc: "8gen2,8gen1,min"
+  extra_resolutions: "512x768,768x512"
+  extra_soc: "8gen2,8gen1"
+
+- vendor: qualcomm
+  kind: sdxl
+  model_path: /data/models/MySdxl.safetensors
+  model_name: MySdxl
+  output_dir: ./output
+  soc: "8gen3"
+  scheduler: dpm
+  cfg: "5,7"
+  steps: "15,30"
+
+- vendor: mediatek
+  kind: sd15
+  model_path: /data/models/AnythingV5.safetensors
+  model_name: AnythingV5
+  output_dir: ./output
+  mtk_soc: MT6991
+  mtk_suffix: d9400
+  # CLIP from QNN zip OR CPU app zip:
+  clip_zip: ./output/AnythingV5_qnn2.28_8gen2.zip
+  # clip_zip: ./output/AnythingV5.zip

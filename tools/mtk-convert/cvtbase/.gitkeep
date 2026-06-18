@@ -1,0 +1,11 @@
+# cvtbase — MNN conversion templates for Local Dream native --convert
+#
+# Required for MediaTek CLIP export from .safetensors without a QNN/CPU zip.
+#
+# Obtain cvtbase from a Local Dream APK:
+#   unzip LocalDream.apk assets/cvtbase/* -d tools/mtk-convert/cvtbase/
+#
+# Or from the app build output if you build the project locally.
+#
+# Expected files include:
+#   clip_skip_1.mnn, clip_skip_2.mnn, tokenizer.json, …

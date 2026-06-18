@@ -73,6 +73,17 @@ private fun getDeviceSoc(): String = if (Build.VERSION.SDK_INT >= Build.VERSION_
 @Immutable
 data class DownloadProgress(val progress: Float, val downloadedBytes: Long, val totalBytes: Long)
 
+val mediatekChipsetSuffixes = mapOf(
+    "MT6991" to "d9400",  // Dimensity 9400 / 9400+
+    "MT6990" to "d9500",  // Dimensity 9500
+)
+
+enum class NpuVendor {
+    QUALCOMM,
+    MEDIATEK,
+    NONE,
+}
+
 val chipsetModelSuffixes = mapOf(
     "SM8475" to "8gen1",
     "SM8450" to "8gen1",
@@ -132,8 +143,10 @@ data class Model(
     // Backend --type value; each type implies the full model file layout.
     val backendType: String
         get() = when {
+            isSdxl && Model.getNpuVendor() == NpuVendor.MEDIATEK -> "sdxlmtk"
             isSdxl -> "sdxl"
             runOnCpu -> "sd15cpu"
+            Model.getNpuVendor() == NpuVendor.MEDIATEK -> "sd15mtk"
             else -> "sd15npu"
         }
 
@@ -223,10 +236,33 @@ data class Model(
     companion object {
         private const val MODELS_DIR = "models"
 
-        fun isDeviceSupported(): Boolean {
-            val soc = getDeviceSoc()
-            return getChipsetSuffix(soc) != null
+        fun getMtkChipsetSuffix(soc: String): String? {
+            if (soc in mediatekChipsetSuffixes) {
+                return mediatekChipsetSuffixes[soc]
+            }
+            if (soc.startsWith("MT")) {
+                return "d9400"
+            }
+            return null
         }
+
+        fun getNpuVendor(): NpuVendor {
+            val soc = getDeviceSoc()
+            return when {
+                getChipsetSuffix(soc) != null -> NpuVendor.QUALCOMM
+                getMtkChipsetSuffix(soc) != null -> NpuVendor.MEDIATEK
+                else -> NpuVendor.NONE
+            }
+        }
+
+        fun isDeviceSupported(): Boolean = getNpuVendor() != NpuVendor.NONE
+
+        fun isMediaTekDevice(): Boolean {
+            val soc = getDeviceSoc().uppercase()
+            return soc.startsWith("MT") || getMtkChipsetSuffix(soc) != null
+        }
+
+        fun isNpuCapableDevice(): Boolean = getNpuVendor() != NpuVendor.NONE
 
         fun isQualcommDevice(): Boolean {
             val soc = getDeviceSoc().uppercase()
@@ -237,7 +273,35 @@ data class Model(
             return prefixes.any { soc.startsWith(it) }
         }
 
+        fun getNpuModelSuffix(): String {
+            val soc = getDeviceSoc()
+            return when (getNpuVendor()) {
+                NpuVendor.QUALCOMM -> getChipsetSuffix(soc) ?: "min"
+                NpuVendor.MEDIATEK -> getMtkChipsetSuffix(soc) ?: "d9400"
+                NpuVendor.NONE -> "min"
+            }
+        }
+
+        fun getNpuRepoPrefix(isSdxl: Boolean): String = when (getNpuVendor()) {
+            NpuVendor.MEDIATEK -> if (isSdxl) "xororz/sdxl-mtk" else "xororz/sd-mtk"
+            else -> if (isSdxl) "xororz/sdxl-qnn" else "xororz/sd-qnn"
+        }
+
+        fun getNpuFileTag(isSdxl: Boolean): String = when (getNpuVendor()) {
+            NpuVendor.MEDIATEK -> "litert"
+            NpuVendor.QUALCOMM -> if (isSdxl) "qnn2.28_8gen3" else "qnn2.28"
+            NpuVendor.NONE -> "qnn2.28"
+        }
+
         fun getChipsetSuffix(soc: String): String? {
+            if (soc in chipsetModelSuffixes) {
+                return chipsetModelSuffixes[soc]
+            }
+            if (soc.startsWith("SM")) {
+                return "min"
+            }
+            return null
+        }
             if (soc in chipsetModelSuffixes) {
                 return chipsetModelSuffixes[soc]
             }
@@ -451,11 +515,15 @@ class ModelRepository private constructor(private val context: Context) {
 
                 val finishedFile = File(dir, "finished")
                 val npuCustomFile = File(dir, "npucustom")
+                val mtkCustomFile = File(dir, "mtkcustom")
                 val sdxlFile = File(dir, "SDXL")
 
                 when {
                     sdxlFile.exists() ->
                         customModels.add(createCustomModel(dir, isNpu = true, isSdxl = true))
+
+                    mtkCustomFile.exists() ->
+                        customModels.add(createCustomModel(dir, isNpu = true, isMtk = true))
 
                     finishedFile.exists() ->
                         customModels.add(createCustomModel(dir, isNpu = false))
@@ -469,7 +537,12 @@ class ModelRepository private constructor(private val context: Context) {
         return customModels.sortedBy { it.name.lowercase() }
     }
 
-    private fun createCustomModel(modelDir: File, isNpu: Boolean = false, isSdxl: Boolean = false): Model {
+    private fun createCustomModel(
+        modelDir: File,
+        isNpu: Boolean = false,
+        isSdxl: Boolean = false,
+        isMtk: Boolean = false,
+    ): Model {
         val modelId = modelDir.name
         // Imported models have no code-level defaults: config.json (if
         // bundled in the zip) wins, the generic placeholder prompts below
@@ -528,11 +601,29 @@ class ModelRepository private constructor(private val context: Context) {
         return model.copy(configDefaults = config.withFallback(model.configDefaults))
     }
 
-    private fun isSdxlCapableSoc(soc: String): Boolean = soc in setOf("SM8750", "SM8750P", "SM8850", "SM8850P", "SM8845", "SM8650")
+    private fun isSdxlCapableSoc(soc: String): Boolean = soc in setOf(
+        "SM8750", "SM8750P", "SM8850", "SM8850P", "SM8845", "SM8650",
+        "MT6991", "MT6990",
+    )
+
+    private fun buildNpuFileUri(modelFileName: String, isSdxl: Boolean = false): String {
+        val suffix = Model.getNpuModelSuffix()
+        return when (Model.getNpuVendor()) {
+            NpuVendor.MEDIATEK ->
+                "${Model.getNpuRepoPrefix(isSdxl)}/resolve/main/${modelFileName}_litert_$suffix.zip"
+            NpuVendor.QUALCOMM -> if (isSdxl) {
+                "${Model.getNpuRepoPrefix(true)}/resolve/main/${modelFileName}_qnn2.28_8gen3.zip"
+            } else {
+                "${Model.getNpuRepoPrefix(false)}/resolve/main/${modelFileName}_qnn2.28_$suffix.zip"
+            }
+            NpuVendor.NONE ->
+                "${Model.getNpuRepoPrefix(isSdxl)}/resolve/main/${modelFileName}_qnn2.28_$suffix.zip"
+        }
+    }
 
     private fun createCyberRealisticV10Model(): Model {
         val id = "cyber_realistic_v10"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/cyber_realistic_v10_qnn2.28_8gen3.zip"
+        val fileUri = buildNpuFileUri("cyber_realistic_v10", isSdxl = true)
 
         val isDownloaded = Model.isModelDownloaded(context, id, false)
 
@@ -556,7 +647,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createCyberRealisticV10Dmd2Model(): Model {
         val id = "cyber_realistic_v10_dmd2"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/cyber_realistic_v10_dmd2_qnn2.28_8gen3.zip"
+        val fileUri = buildNpuFileUri("cyber_realistic_v10_dmd2", isSdxl = true)
 
         val isDownloaded = Model.isModelDownloaded(context, id, false)
 
@@ -582,7 +673,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createIllustriousV16Model(): Model {
         val id = "illustrious_v16"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/illustrious_v16_qnn2.28_8gen3.zip"
+        val fileUri = buildNpuFileUri("illustrious_v16", isSdxl = true)
 
         val isDownloaded = Model.isModelDownloaded(context, id, false)
 
@@ -606,7 +697,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createIllustriousV16Dmd2Model(): Model {
         val id = "illustrious_v16_dmd2"
-        val fileUri = "xororz/sdxl-qnn/resolve/main/illustrious_v16_dmd2_qnn2.28_8gen3.zip"
+        val fileUri = buildNpuFileUri("illustrious_v16_dmd2", isSdxl = true)
 
         val isDownloaded = Model.isModelDownloaded(context, id, false)
 
@@ -630,9 +721,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createAnythingV5Model(): Model {
         val id = "anythingv5"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/AnythingV5_qnn2.28_$suffix.zip"
+        val fileUri = buildNpuFileUri("AnythingV5")
 
         val isDownloaded = Model.isModelDownloaded(context, id, false)
         val needsUpgrade = Model.needsModelUpgrade(context, id, true)
@@ -678,9 +767,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createQteaMixModel(): Model {
         val id = "qteamix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/QteaMix_qnn2.28_$suffix.zip"
+        val fileUri = buildNpuFileUri("QteaMix")
         val isDownloaded = Model.isModelDownloaded(context, id, false)
         val needsUpgrade = Model.needsModelUpgrade(context, id, true)
 
@@ -723,9 +810,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createCuteYukiMixModel(): Model {
         val id = "cuteyukimix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/CuteYukiMix_qnn2.28_$suffix.zip"
+        val fileUri = buildNpuFileUri("CuteYukiMix")
         val isDownloaded = Model.isModelDownloaded(context, id, false)
         val needsUpgrade = Model.needsModelUpgrade(context, id, true)
 
@@ -768,9 +853,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createAbsoluteRealityModel(): Model {
         val id = "absolutereality"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/AbsoluteReality_qnn2.28_$suffix.zip"
+        val fileUri = buildNpuFileUri("AbsoluteReality")
         val isDownloaded = Model.isModelDownloaded(context, id, false)
         val needsUpgrade = Model.needsModelUpgrade(context, id, true)
 
@@ -814,9 +897,7 @@ class ModelRepository private constructor(private val context: Context) {
 
     private fun createChilloutMixModel(): Model {
         val id = "chilloutmix"
-        val soc = getDeviceSoc()
-        val suffix = Model.getChipsetSuffix(soc) ?: "min"
-        val fileUri = "xororz/sd-qnn/resolve/main/ChilloutMix_qnn2.28_$suffix.zip"
+        val fileUri = buildNpuFileUri("ChilloutMix")
         val isDownloaded = Model.isModelDownloaded(context, id, false)
         val needsUpgrade = Model.needsModelUpgrade(context, id, true)
 

@@ -1,5 +1,5 @@
-#ifndef PIPELINESD15NPU_HPP
-#define PIPELINESD15NPU_HPP
+#ifndef PIPELINESD15MTK_HPP
+#define PIPELINESD15MTK_HPP
 
 #include <MNN/Interpreter.hpp>
 #include <memory>
@@ -8,25 +8,24 @@
 
 #include "Config.hpp"
 #include "MnnUtils.hpp"
-#include "PipelineQnn.hpp"
+#include "MtkRuntime.hpp"
+#include "PipelineNpuBase.hpp"
 
-// sd15npu: UNet and VAE run as persistent QNN (HTP) contexts; CLIP runs on a
-// persistent MNN CPU session. Supports zstd resolution patches for unet.bin
-// and tiled VAE for outputs above 512px.
-class PipelineSd15Npu : public PipelineQnn {
+// sd15mtk: UNet and VAE run on MediaTek NPU via LiteRT; CLIP on MNN CPU.
+// Fixed 512px resolution (no zstd patches in v1).
+class PipelineSd15Mtk : public PipelineNpuBase {
  public:
-  PipelineSd15Npu(TextEncoder &text_encoder, const std::string &model_dir,
+  PipelineSd15Mtk(TextEncoder &text_encoder, const std::string &model_dir,
                   std::string clip_path, std::string unet_path,
                   std::string vae_decoder_path, std::string vae_encoder_path,
-                  std::string patch_path, bool use_v_pred)
-      : PipelineQnn(text_encoder, model_dir, /*sdxl=*/false, use_v_pred),
+                  bool use_v_pred)
+      : PipelineNpuBase(text_encoder, model_dir, /*sdxl=*/false, use_v_pred),
         clip_path_(std::move(clip_path)),
         unet_path_(std::move(unet_path)),
         vae_decoder_path_(std::move(vae_decoder_path)),
-        vae_encoder_path_(std::move(vae_encoder_path)),
-        patch_path_(std::move(patch_path)) {}
+        vae_encoder_path_(std::move(vae_encoder_path)) {}
 
-  ~PipelineSd15Npu() override {
+  ~PipelineSd15Mtk() override {
     if (clip_session_) clip_interpreter_->releaseSession(clip_session_);
     delete clip_interpreter_;
   }
@@ -49,61 +48,34 @@ class PipelineSd15Npu : public PipelineQnn {
     clip_interpreter_->resizeSession(clip_session_);
     clip_interpreter_->releaseModel();
 
-    // Optional zstd resolution patch, applied in memory against the base
-    // unet.bin used as dictionary.
-    std::unique_ptr<qnn_runtime::PatchedModelBuffer> patched;
-    if (!patch_path_.empty()) {
-      QNN_INFO("Applying patch to unet model in memory...");
-      patched = qnn_runtime::applyZstdPatchToBuffer(unet_path_, patch_path_);
-      if (!patched) {
-        QNN_ERROR("Failed to apply patch to unet model buffer");
-        return false;
-      }
-      QNN_INFO("Patch applied successfully to buffer (size: %llu bytes)",
-               patched->size);
-      qnn_runtime::cleanupOldPatchedFiles(patch_path_);
-    }
-
-    auto unet_qnn = qnn_runtime::createModel(unet_path_, "unet");
-    if (!unet_qnn) {
-      QNN_ERROR("Failed create QNN UNET model.");
+    auto unet_mtk = mtk_runtime::createModel(unet_path_, "unet");
+    if (!unet_mtk) {
+      QNN_ERROR("Failed create MTK UNET model.");
       return false;
     }
-    auto vae_decoder_qnn = qnn_runtime::createModel(vae_decoder_path_, "vae_decoder");
-    if (!vae_decoder_qnn) {
-      QNN_ERROR("Failed create QNN VAE Decoder model.");
+    auto vae_decoder_mtk = mtk_runtime::createModel(vae_decoder_path_, "vae_decoder");
+    if (!vae_decoder_mtk) {
+      QNN_ERROR("Failed create MTK VAE Decoder model.");
       return false;
     }
-    std::unique_ptr<QnnModel> vae_encoder_qnn;
+    std::unique_ptr<MtkModel> vae_encoder_mtk;
     if (!vae_encoder_path_.empty()) {
-      vae_encoder_qnn = qnn_runtime::createModel(vae_encoder_path_, "vae_encoder");
-      if (!vae_encoder_qnn) QNN_WARN("Failed create QNN VAE Enc model.");
+      vae_encoder_mtk = mtk_runtime::createModel(vae_encoder_path_, "vae_encoder");
+      if (!vae_encoder_mtk) QNN_WARN("Failed create MTK VAE Enc model.");
     } else {
       QNN_INFO("img2img disabled: VAE encoder not loaded");
     }
 
-    int status;
-    if (patched && patched->buffer) {
-      status = qnn_runtime::initializeApp("UNET", unet_qnn, patched->buffer.get(),
-                                          patched->size);
-    } else {
-      status = qnn_runtime::initializeApp("UNET", unet_qnn);
-    }
-    if (status != EXIT_SUCCESS) return false;
-    if (patched) {
-      QNN_INFO("Releasing unet patch buffer to free memory");
-      patched.reset();
-    }
-
-    if (qnn_runtime::initializeApp("VAEDecoder", vae_decoder_qnn) != EXIT_SUCCESS)
+    if (mtk_runtime::initializeApp("UNET", unet_mtk) != EXIT_SUCCESS) return false;
+    if (mtk_runtime::initializeApp("VAEDecoder", vae_decoder_mtk) != EXIT_SUCCESS)
       return false;
-    if (vae_encoder_qnn &&
-        qnn_runtime::initializeApp("VAEEncoder", vae_encoder_qnn) != EXIT_SUCCESS)
+    if (vae_encoder_mtk &&
+        mtk_runtime::initializeApp("VAEEncoder", vae_encoder_mtk) != EXIT_SUCCESS)
       return false;
 
-    unet_ = std::move(unet_qnn);
-    vae_decoder_ = std::move(vae_decoder_qnn);
-    vae_encoder_ = std::move(vae_encoder_qnn);
+    unet_ = std::move(unet_mtk);
+    vae_decoder_ = std::move(vae_decoder_mtk);
+    vae_encoder_ = std::move(vae_encoder_mtk);
     return true;
   }
 
@@ -111,7 +83,7 @@ class PipelineSd15Npu : public PipelineQnn {
 
  protected:
   bool previewSupported() const override { return true; }
-  bool vaeTilingSupported() const override { return true; }
+  bool vaeTilingSupported() const override { return false; }
 
   void encodeText(const ProcessedPromptPair &prompts, bool need_negative,
                   bool need_positive, Conditioning &cond) override {
@@ -138,39 +110,39 @@ class PipelineSd15Npu : public PipelineQnn {
 
   void vaeEncode(const GenerationRequest &, const float *image, float *mean,
                  float *std_dev) override {
-    if (!vae_encoder_) throw std::runtime_error("QNN VAE Enc missing");
-    if (StatusCode::SUCCESS != vae_encoder_->executeVaeEncoderGraphs(
-                                   const_cast<float *>(image), mean, std_dev))
-      throw std::runtime_error("QNN VAE enc exec failed");
+    if (!vae_encoder_) throw std::runtime_error("MTK VAE Enc missing");
+    if (NpuStatus::SUCCESS != vae_encoder_->executeVaeEncoderGraphs(
+                                  const_cast<float *>(image), mean, std_dev))
+      throw std::runtime_error("MTK VAE enc exec failed");
   }
 
   void runUnetStep(const GenerationRequest &, const float *latents_batch2,
                    int timestep, bool skip_uncond, Conditioning &cond,
                    float *out_batch2) override {
-    if (!unet_) throw std::runtime_error("QNN UNET missing");
+    if (!unet_) throw std::runtime_error("MTK UNET missing");
 
     const int single_latent_size = 1 * 4 * sample_width * sample_height;
     float *latents_in = const_cast<float *>(latents_batch2);
 
     if (!skip_uncond &&
-        StatusCode::SUCCESS != unet_->executeUnetGraphs(latents_in, timestep,
-                                                        cond.negHidden(),
-                                                        out_batch2))
-      throw std::runtime_error("QNN UNET exec failed (uncond)");
+        NpuStatus::SUCCESS != unet_->executeUnetGraphs(latents_in, timestep,
+                                                       cond.negHidden(),
+                                                       out_batch2))
+      throw std::runtime_error("MTK UNET exec failed (uncond)");
 
-    if (StatusCode::SUCCESS !=
+    if (NpuStatus::SUCCESS !=
         unet_->executeUnetGraphs(latents_in + single_latent_size, timestep,
                                  cond.posHidden(),
                                  out_batch2 + single_latent_size))
-      throw std::runtime_error("QNN UNET exec failed (cond)");
+      throw std::runtime_error("MTK UNET exec failed (cond)");
   }
 
   void vaeDecode(const GenerationRequest &, const float *latents,
                  float *pixels) override {
-    if (!vae_decoder_) throw std::runtime_error("QNN VAE Dec missing");
-    if (StatusCode::SUCCESS != vae_decoder_->executeVaeDecoderGraphs(
-                                   const_cast<float *>(latents), pixels))
-      throw std::runtime_error("QNN VAE dec exec failed");
+    if (!vae_decoder_) throw std::runtime_error("MTK VAE Dec missing");
+    if (NpuStatus::SUCCESS != vae_decoder_->executeVaeDecoderGraphs(
+                                  const_cast<float *>(latents), pixels))
+      throw std::runtime_error("MTK VAE dec exec failed");
   }
 
  private:
@@ -178,10 +150,9 @@ class PipelineSd15Npu : public PipelineQnn {
   const std::string unet_path_;
   const std::string vae_decoder_path_;
   const std::string vae_encoder_path_;
-  const std::string patch_path_;
 
   MNN::Interpreter *clip_interpreter_ = nullptr;
   MNN::Session *clip_session_ = nullptr;
 };
 
-#endif  // PIPELINESD15NPU_HPP
+#endif  // PIPELINESD15MTK_HPP

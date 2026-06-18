@@ -13,12 +13,13 @@
 #include <iostream>
 
 #include "DataUtil.hpp"
+#include "INpuModel.hpp"
 #include "Logger.hpp"
 #include "SDUtils.hpp"
 
 using namespace qnn::tools::sample_app;
 
-class QnnModel : public QnnSampleApp {
+class QnnModel : public QnnSampleApp, public INpuModel {
  public:
   Qnn_Tensor_t *inputs = nullptr;
   Qnn_Tensor_t *outputs = nullptr;
@@ -63,7 +64,7 @@ class QnnModel : public QnnSampleApp {
     }
   }
 
-  StatusCode enablePerformaceMode() {
+  NpuStatus enablePerformaceMode() override {
     uint32_t powerConfigId;
     uint32_t deviceId = 0;
     uint32_t coreId = 0;
@@ -161,8 +162,8 @@ class QnnModel : public QnnSampleApp {
     return StatusCode::SUCCESS;
   }
 
-  StatusCode executeUnetGraphs(float *latents, int timestep,
-                               float *text_embedding, float *latents_pred) {
+  NpuStatus executeUnetGraphs(float *latents, int timestep,
+                              float *text_embedding, float *latents_pred) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -248,8 +249,8 @@ class QnnModel : public QnnSampleApp {
     return returnStatus;
   }
 
-  StatusCode executeVaeEncoderGraphs(float *pixel_values, float *mean,
-                                     float *std) {
+  NpuStatus executeVaeEncoderGraphs(float *pixel_values, float *mean,
+                                    float *std) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -321,7 +322,7 @@ class QnnModel : public QnnSampleApp {
     return returnStatus;
   }
 
-  StatusCode executeVaeDecoderGraphs(float *latents, float *pixel_values) {
+  NpuStatus executeVaeDecoderGraphs(float *latents, float *pixel_values) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -388,10 +389,10 @@ class QnnModel : public QnnSampleApp {
     return returnStatus;
   }
 
-  StatusCode executeUnetGraphsSDXL(float *sample, int timestep,
-                                   float *encoder_hidden_states,
-                                   float *text_embeds, float *time_ids,
-                                   float *out_sample) {
+  NpuStatus executeUnetGraphsSDXL(float *sample, int timestep,
+                                 float *encoder_hidden_states,
+                                 float *text_embeds, float *time_ids,
+                                 float *out_sample) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -480,8 +481,8 @@ class QnnModel : public QnnSampleApp {
     return returnStatus;
   }
 
-  StatusCode executeVaeEncoderGraphsSDXL(float *pixel_values, float *mean,
-                                         float *std) {
+  NpuStatus executeVaeEncoderGraphsSDXL(float *pixel_values, float *mean,
+                                        float *std) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -544,7 +545,8 @@ class QnnModel : public QnnSampleApp {
     return returnStatus;
   }
 
-  StatusCode executeVaeDecoderGraphsSDXL(float *latents, float *pixel_values) {
+  NpuStatus executeVaeDecoderGraphsSDXL(float *latents,
+                                        float *pixel_values) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;
@@ -604,7 +606,8 @@ class QnnModel : public QnnSampleApp {
     return returnStatus;
   }
 
-  StatusCode executeUpscalerGraphs(float *input_image, float *output_image) {
+  NpuStatus executeUpscalerGraphs(float *input_image,
+                                  float *output_image) override {
     auto returnStatus = StatusCode::SUCCESS;
 
     size_t graphIdx = 0;

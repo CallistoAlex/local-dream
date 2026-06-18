@@ -1,0 +1,8 @@
+torch>=2.1.0
+diffusers>=0.27.0
+transformers>=4.38.0
+safetensors>=0.4.0
+onnx>=1.15.0
+onnxruntime>=1.17.0
+numpy>=1.24.0
+Pillow>=10.0.0

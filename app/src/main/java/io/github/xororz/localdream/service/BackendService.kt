@@ -8,6 +8,7 @@ import androidx.core.app.NotificationCompat
 import io.github.xororz.localdream.BuildConfig
 import io.github.xororz.localdream.R
 import io.github.xororz.localdream.data.Model
+import io.github.xororz.localdream.data.NpuVendor
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.Executors
@@ -277,6 +278,32 @@ class BackendService : Service() {
             .build()
     }
 
+    private fun copyRuntimeLibsFromAssets(assetsSubdir: String) {
+        val libAssets = assets.list(assetsSubdir) ?: emptyArray()
+        libAssets.forEach { fileName ->
+            val targetLib = File(runtimeDir, fileName)
+
+            val needsCopy = !targetLib.exists() ||
+                run {
+                    val assetInputStream = assets.open("$assetsSubdir/$fileName")
+                    val assetSize = assetInputStream.use { it.available().toLong() }
+                    targetLib.length() != assetSize
+                }
+
+            if (needsCopy) {
+                assets.open("$assetsSubdir/$fileName").use { input ->
+                    targetLib.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                Log.d(TAG, "Copied $fileName from assets/$assetsSubdir to runtime directory")
+            }
+
+            targetLib.setReadable(true, true)
+            targetLib.setExecutable(true, true)
+        }
+    }
+
     private fun prepareRuntimeDir() {
         try {
             runtimeDir = File(filesDir, RUNTIME_DIR).apply {
@@ -285,35 +312,19 @@ class BackendService : Service() {
                 }
             }
 
+            val npuVendor = Model.getNpuVendor()
+            val assetsSubdir = when (npuVendor) {
+                NpuVendor.MEDIATEK -> "mtklibs"
+                NpuVendor.QUALCOMM -> "qnnlibs"
+                NpuVendor.NONE -> "qnnlibs"
+            }
+
             try {
-                val qnnlibsAssets = assets.list("qnnlibs")
-                qnnlibsAssets?.forEach { fileName ->
-                    val targetLib = File(runtimeDir, fileName)
-
-                    val needsCopy = !targetLib.exists() ||
-                        run {
-                            val assetInputStream = assets.open("qnnlibs/$fileName")
-                            val assetSize = assetInputStream.use { it.available().toLong() }
-                            targetLib.length() != assetSize
-                        }
-
-                    if (needsCopy) {
-                        val assetInputStream = assets.open("qnnlibs/$fileName")
-                        assetInputStream.use { input ->
-                            targetLib.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                        Log.d(TAG, "Copied $fileName from assets to runtime directory")
-                    }
-
-                    targetLib.setReadable(true, true)
-                    targetLib.setExecutable(true, true)
-                }
-                Log.i(TAG, "QNN libraries prepared in runtime directory")
+                copyRuntimeLibsFromAssets(assetsSubdir)
+                Log.i(TAG, "$assetsSubdir prepared in runtime directory")
             } catch (e: IOException) {
-                Log.e(TAG, "Failed to prepare QNN libraries from assets", e)
-                throw RuntimeException("Failed to prepare QNN libraries from assets", e)
+                Log.e(TAG, "Failed to prepare $assetsSubdir from assets", e)
+                throw RuntimeException("Failed to prepare $assetsSubdir from assets", e)
             }
 
             if (BuildConfig.FLAVOR == "filter") {
@@ -428,8 +439,10 @@ class BackendService : Service() {
                     File(filesDir, "safety_checker.mnn").absolutePath,
                 )
             }
-            if (backendType == "sdxl" && preferences.getBoolean("sdxl_lowram", true)) {
-                command += "--lowram"
+            if (backendType == "sdxl" || backendType == "sdxlmtk") {
+                if (preferences.getBoolean("sdxl_lowram", true)) {
+                    command += "--lowram"
+                }
             }
             if (listenOnAll) {
                 command += "--listen_all"
@@ -467,12 +480,16 @@ class BackendService : Service() {
             }
             val systemLibPathsStr = systemLibPaths.joinToString(":")
             env["LD_LIBRARY_PATH"] = systemLibPathsStr
-            env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
+            if (backendType == "sd15npu" || backendType == "sdxl") {
+                env["DSP_LIBRARY_PATH"] = runtimeDir.absolutePath
+            }
 
             Log.d(TAG, "COMMAND: ${command.joinToString(" ")}")
             Log.d(TAG, "DIR: $runtimeDir")
             Log.d(TAG, "LD_LIBRARY_PATH=${env["LD_LIBRARY_PATH"]}")
-            Log.d(TAG, "DSP_LIBRARY_PATH=${env["DSP_LIBRARY_PATH"]}")
+            if (env.containsKey("DSP_LIBRARY_PATH")) {
+                Log.d(TAG, "DSP_LIBRARY_PATH=${env["DSP_LIBRARY_PATH"]}")
+            }
 
             val processBuilder = ProcessBuilder(command).apply {
                 directory(File(nativeDir))

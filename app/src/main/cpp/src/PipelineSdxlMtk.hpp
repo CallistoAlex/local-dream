@@ -1,5 +1,5 @@
-#ifndef PIPELINESDXL_HPP
-#define PIPELINESDXL_HPP
+#ifndef PIPELINESDXLMTK_HPP
+#define PIPELINESDXLMTK_HPP
 
 #include <MNN/Interpreter.hpp>
 #include <memory>
@@ -8,19 +8,17 @@
 
 #include "Config.hpp"
 #include "MnnUtils.hpp"
-#include "PipelineQnn.hpp"
+#include "MtkRuntime.hpp"
+#include "PipelineNpuBase.hpp"
 
-// sdxl: QNN (HTP) UNet/VAE at a fixed 1024x1024, dual MNN CLIP encoders
-// (CLIP-L + CLIP-G) with pooled output, plus SDXL micro-conditioning
-// (time_ids). In lowram mode every stage model is loaded right before use and
-// released right after, trading latency for peak memory.
-class PipelineSdxl : public PipelineQnn {
+// sdxlmtk: LiteRT NPU UNet/VAE at 1024x1024, dual MNN CLIP encoders.
+class PipelineSdxlMtk : public PipelineNpuBase {
  public:
-  PipelineSdxl(TextEncoder &text_encoder, const std::string &model_dir,
-               std::string clip_path, std::string clip2_path,
-               std::string unet_path, std::string vae_decoder_path,
-               std::string vae_encoder_path, bool use_v_pred, bool lowram)
-      : PipelineQnn(text_encoder, model_dir, /*sdxl=*/true, use_v_pred),
+  PipelineSdxlMtk(TextEncoder &text_encoder, const std::string &model_dir,
+                 std::string clip_path, std::string clip2_path,
+                 std::string unet_path, std::string vae_decoder_path,
+                 std::string vae_encoder_path, bool use_v_pred, bool lowram)
+      : PipelineNpuBase(text_encoder, model_dir, /*sdxl=*/true, use_v_pred),
         clip_path_(std::move(clip_path)),
         clip2_path_(std::move(clip2_path)),
         unet_path_(std::move(unet_path)),
@@ -28,13 +26,11 @@ class PipelineSdxl : public PipelineQnn {
         vae_encoder_path_(std::move(vae_encoder_path)),
         lowram_(lowram) {}
 
-  ~PipelineSdxl() override { releaseClips(); }
+  ~PipelineSdxlMtk() override { releaseClips(); }
 
   bool initialize() override {
     if (lowram_) {
-      QNN_INFO(
-          "[lowram] SDXL low-RAM mode: skipping pre-load of CLIP/UNET/VAE "
-          "models");
+      QNN_INFO("[lowram] SDXL MTK low-RAM mode: skipping pre-load");
       return true;
     }
 
@@ -44,36 +40,36 @@ class PipelineSdxl : public PipelineQnn {
       QNN_ERROR("%s", e.what());
       return false;
     }
-    QNN_INFO("Persistent SDXL MNN CLIP1/CLIP2 sessions created.");
+    QNN_INFO("Persistent SDXL MTK MNN CLIP1/CLIP2 sessions created.");
 
-    auto unet_qnn = qnn_runtime::createModel(unet_path_, "unet");
-    if (!unet_qnn) {
-      QNN_ERROR("Failed create QNN UNET model.");
+    auto unet_mtk = mtk_runtime::createModel(unet_path_, "unet");
+    if (!unet_mtk) {
+      QNN_ERROR("Failed create MTK UNET model.");
       return false;
     }
-    auto vae_decoder_qnn = qnn_runtime::createModel(vae_decoder_path_, "vae_decoder");
-    if (!vae_decoder_qnn) {
-      QNN_ERROR("Failed create QNN VAE Decoder model.");
+    auto vae_decoder_mtk = mtk_runtime::createModel(vae_decoder_path_, "vae_decoder");
+    if (!vae_decoder_mtk) {
+      QNN_ERROR("Failed create MTK VAE Decoder model.");
       return false;
     }
-    std::unique_ptr<QnnModel> vae_encoder_qnn;
+    std::unique_ptr<MtkModel> vae_encoder_mtk;
     if (!vae_encoder_path_.empty()) {
-      vae_encoder_qnn = qnn_runtime::createModel(vae_encoder_path_, "vae_encoder");
-      if (!vae_encoder_qnn) QNN_WARN("Failed create QNN VAE Enc model.");
+      vae_encoder_mtk = mtk_runtime::createModel(vae_encoder_path_, "vae_encoder");
+      if (!vae_encoder_mtk) QNN_WARN("Failed create MTK VAE Enc model.");
     } else {
       QNN_INFO("img2img disabled: VAE encoder not loaded");
     }
 
-    if (qnn_runtime::initializeApp("UNET", unet_qnn) != EXIT_SUCCESS) return false;
-    if (qnn_runtime::initializeApp("VAEDecoder", vae_decoder_qnn) != EXIT_SUCCESS)
+    if (mtk_runtime::initializeApp("UNET", unet_mtk) != EXIT_SUCCESS) return false;
+    if (mtk_runtime::initializeApp("VAEDecoder", vae_decoder_mtk) != EXIT_SUCCESS)
       return false;
-    if (vae_encoder_qnn &&
-        qnn_runtime::initializeApp("VAEEncoder", vae_encoder_qnn) != EXIT_SUCCESS)
+    if (vae_encoder_mtk &&
+        mtk_runtime::initializeApp("VAEEncoder", vae_encoder_mtk) != EXIT_SUCCESS)
       return false;
 
-    unet_ = std::move(unet_qnn);
-    vae_decoder_ = std::move(vae_decoder_qnn);
-    vae_encoder_ = std::move(vae_encoder_qnn);
+    unet_ = std::move(unet_mtk);
+    vae_decoder_ = std::move(vae_decoder_mtk);
+    vae_encoder_ = std::move(vae_encoder_mtk);
     return true;
   }
 
@@ -82,11 +78,7 @@ class PipelineSdxl : public PipelineQnn {
   }
 
  protected:
-  // Per-stage decode previews would force a VAE decoder load/release per
-  // step in lowram mode; disable them there.
   bool previewSupported() const override { return !lowram_; }
-  // Normal SDXL generation is exactly 1024 so tiling never triggers there;
-  // only ultrafix inputs exceed the fixed graph size.
   bool vaeTilingSupported() const override { return true; }
   int vaeTilePixelSize() const override { return 1024; }
 
@@ -108,83 +100,73 @@ class PipelineSdxl : public PipelineQnn {
     if (lowram_) releaseClips();
   }
 
-  // Lowram model lifetimes are stage-scoped, not call-scoped: a stage model
-  // loads on first use and is released only when the next stage needs the
-  // memory (or by releaseTransientModels on exit). Tiled ultrafix passes
-  // call vaeEncode/vaeDecode/runUnetStep dozens of times per stage, so a
-  // per-call load/release would reload a multi-GB model once per tile.
   void vaeEncode(const GenerationRequest &, const float *image, float *mean,
                  float *std_dev) override {
     if (lowram_) loadVaeEncoderIfNeeded();
-    if (!vae_encoder_) throw std::runtime_error("QNN VAE Enc missing");
-    if (StatusCode::SUCCESS != vae_encoder_->executeVaeEncoderGraphsSDXL(
-                                   const_cast<float *>(image), mean, std_dev))
-      throw std::runtime_error("QNN VAE enc SDXL exec failed");
+    if (!vae_encoder_) throw std::runtime_error("MTK VAE Enc missing");
+    if (NpuStatus::SUCCESS != vae_encoder_->executeVaeEncoderGraphsSDXL(
+                                  const_cast<float *>(image), mean, std_dev))
+      throw std::runtime_error("MTK VAE enc SDXL exec failed");
   }
 
   void beginDenoise(const GenerationRequest &) override {
     if (!lowram_ || unet_) return;
-    // The encode stage is over once the UNet is needed; never hold both.
     releaseVaeEncoder();
-    unet_ = qnn_runtime::createAndInitModel(unet_path_, "unet");
-    QNN_INFO("[lowram] SDXL UNET loaded");
+    unet_ = mtk_runtime::createAndInitModel(unet_path_, "unet");
+    QNN_INFO("[lowram] SDXL MTK UNET loaded");
   }
 
   void runUnetStep(const GenerationRequest &, const float *latents_batch2,
                    int timestep, bool skip_uncond, Conditioning &cond,
                    float *out_batch2) override {
-    if (!unet_) throw std::runtime_error("QNN UNET missing");
+    if (!unet_) throw std::runtime_error("MTK UNET missing");
 
     const int single_latent_size = 1 * 4 * sample_width * sample_height;
     float *latents_in = const_cast<float *>(latents_batch2);
     float *time_ids = cond.time_ids.data();
 
     if (!skip_uncond &&
-        StatusCode::SUCCESS != unet_->executeUnetGraphsSDXL(
-                                   latents_in, timestep, cond.negHidden(),
-                                   cond.negPooled(), time_ids, out_batch2))
-      throw std::runtime_error("QNN UNET SDXL exec failed (uncond)");
+        NpuStatus::SUCCESS != unet_->executeUnetGraphsSDXL(
+                                  latents_in, timestep, cond.negHidden(),
+                                  cond.negPooled(), time_ids, out_batch2))
+      throw std::runtime_error("MTK UNET SDXL exec failed (uncond)");
 
-    if (StatusCode::SUCCESS !=
+    if (NpuStatus::SUCCESS !=
         unet_->executeUnetGraphsSDXL(
             latents_in + single_latent_size, timestep, cond.posHidden(),
             cond.posPooled(), time_ids + 6, out_batch2 + single_latent_size))
-      throw std::runtime_error("QNN UNET SDXL exec failed (cond)");
+      throw std::runtime_error("MTK UNET SDXL exec failed (cond)");
   }
 
   void endDenoise() override {
     if (!lowram_ || !unet_) return;
     unet_.reset();
-    QNN_INFO("[lowram] SDXL UNET released");
+    QNN_INFO("[lowram] SDXL MTK UNET released");
   }
 
   void vaeDecode(const GenerationRequest &, const float *latents,
                  float *pixels) override {
     if (lowram_ && !vae_decoder_) {
       vae_decoder_ =
-          qnn_runtime::createAndInitModel(vae_decoder_path_, "vae_decoder");
-      QNN_INFO("[lowram] SDXL VAE Decoder loaded");
+          mtk_runtime::createAndInitModel(vae_decoder_path_, "vae_decoder");
+      QNN_INFO("[lowram] SDXL MTK VAE Decoder loaded");
     }
-    if (!vae_decoder_) throw std::runtime_error("QNN VAE Dec missing");
-    if (StatusCode::SUCCESS != vae_decoder_->executeVaeDecoderGraphsSDXL(
-                                   const_cast<float *>(latents), pixels))
-      throw std::runtime_error("QNN VAE dec SDXL exec failed");
-    // Lowram: stays loaded for the rest of the decode stage; released by
-    // releaseTransientModels when generate() exits.
+    if (!vae_decoder_) throw std::runtime_error("MTK VAE Dec missing");
+    if (NpuStatus::SUCCESS != vae_decoder_->executeVaeDecoderGraphsSDXL(
+                                  const_cast<float *>(latents), pixels))
+      throw std::runtime_error("MTK VAE dec SDXL exec failed");
   }
 
-  // Catch-all for lowram: release whatever stage model is still loaded when
-  // generate() exits (normal return or exception).
   void releaseTransientModels() override {
     if (!lowram_) return;
     if (clip_interpreter_ || clip2_interpreter_) releaseClips();
     if (unet_) {
       unet_.reset();
-      QNN_INFO("[lowram] SDXL UNET released");
+      QNN_INFO("[lowram] SDXL MTK UNET released");
     }
     if (vae_decoder_) {
       vae_decoder_.reset();
-      QNN_INFO("[lowram] SDXL VAE Decoder released");
+      QNN_INFO("[lowram] SDXL MTK VAE Decoder released");
     }
     if (vae_encoder_) releaseVaeEncoder();
   }
@@ -201,7 +183,7 @@ class PipelineSdxl : public PipelineQnn {
       if (!clip2_interpreter_)
         throw std::runtime_error("Failed load SDXL CLIP2 MNN");
     }
-    MnnSessionOptions opts;  // CLIP always runs on CPU
+    MnnSessionOptions opts;
     if (!clip_session_) {
       clip_session_ = createMnnSession(clip_interpreter_, opts);
       if (!clip_session_)
@@ -222,7 +204,7 @@ class PipelineSdxl : public PipelineQnn {
       clip2_interpreter_->resizeSession(clip2_session_);
       clip2_interpreter_->releaseModel();
     }
-    if (lowram_) QNN_INFO("[lowram] SDXL CLIP MNN loaded");
+    if (lowram_) QNN_INFO("[lowram] SDXL MTK CLIP MNN loaded");
   }
 
   void releaseClips() {
@@ -238,29 +220,24 @@ class PipelineSdxl : public PipelineQnn {
     clip_interpreter_ = nullptr;
     delete clip2_interpreter_;
     clip2_interpreter_ = nullptr;
-    if (lowram_) QNN_INFO("[lowram] SDXL CLIP MNN released");
+    if (lowram_) QNN_INFO("[lowram] SDXL MTK CLIP MNN released");
   }
 
   void loadVaeEncoderIfNeeded() {
     if (vae_encoder_) return;
     if (vae_encoder_path_.empty())
-      throw std::runtime_error("[lowram] SDXL VAE Encoder path missing");
+      throw std::runtime_error("[lowram] SDXL MTK VAE Encoder path missing");
     vae_encoder_ =
-        qnn_runtime::createAndInitModel(vae_encoder_path_, "vae_encoder");
-    QNN_INFO("[lowram] SDXL VAE Encoder loaded");
+        mtk_runtime::createAndInitModel(vae_encoder_path_, "vae_encoder");
+    QNN_INFO("[lowram] SDXL MTK VAE Encoder loaded");
   }
 
   void releaseVaeEncoder() {
     if (!vae_encoder_) return;
     vae_encoder_.reset();
-    QNN_INFO("[lowram] SDXL VAE Encoder released");
+    QNN_INFO("[lowram] SDXL MTK VAE Encoder released");
   }
 
-  // Encoder 1 (CLIP-L): 77x768 -> last_hidden_state 77x768.
-  // Encoder 2 (CLIP-G): 77x1280 -> last_hidden_state 77x1280 + pooled_output
-  // 77x1280 (exported without pooling; we select the EOS row here as the true
-  // pooled embedding). Hidden states are concatenated along the feature dim:
-  // [77, 768] + [77, 1280] = [77, 2048].
   void runDualClip(const std::vector<float> &emb1,
                    const std::vector<float> &emb2, const int *ids77,
                    float *out_hidden_concat, float *out_pooled) {
@@ -295,7 +272,6 @@ class PipelineSdxl : public PipelineQnn {
              out2_hidden_data + t * text_embedding_size_2,
              text_embedding_size_2 * sizeof(float));
     }
-    // Pool by picking the EOS (49407) row; fall back to last row (76).
     int eos_pos = 76;
     for (int i = 0; i < 77; i++) {
       if (ids77[i] == 49407) {
@@ -320,4 +296,4 @@ class PipelineSdxl : public PipelineQnn {
   MNN::Session *clip2_session_ = nullptr;
 };
 
-#endif  // PIPELINESDXL_HPP
+#endif  // PIPELINESDXLMTK_HPP

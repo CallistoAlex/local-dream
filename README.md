@@ -2,7 +2,7 @@
 
 # Local Dream <img src="./assets/icon.png" width="32" alt="Local Dream">
 
-**Android Stable Diffusion with Snapdragon NPU acceleration**  
+**Android Stable Diffusion with Snapdragon & MediaTek NPU acceleration**  
 _Also supports CPU/GPU inference_
 
 <img src="./assets/demo1.jpg" alt="App Demo" width="800">
@@ -20,8 +20,8 @@ If you like it, please consider [sponsor](#-support-this-project) this project.
 >
 > **NPU support:**
 >
-> - SD1.5 models are supported on Snapdragon NPUs with Hexagon V68 architecture or newer.
-> - SDXL models are supported on Snapdragon 8 Gen 3 and newer devices.
+> - SD1.5 models are supported on Snapdragon NPUs with Hexagon V68 architecture or newer, and on MediaTek Dimensity 9400+ (MT6991).
+> - SDXL models are supported on Snapdragon 8 Gen 3 and newer devices, and on MediaTek Dimensity 9400+.
 >
 > If your chip is outside the above scope, you can only run SD1.5 on CPU/GPU.
 >
@@ -31,13 +31,29 @@ If you like it, please consider [sponsor](#-support-this-project) this project.
 
 For certain reasons, all guides and documentation have been moved to [Guide Site](https://ld-guide.chino.icu).
 
+### NPU model conversion (host)
+
+Convert checkpoints to NPU zip files — **Qualcomm (QNN)** and **MediaTek (LiteRT)**:
+
+```bash
+python convert.py                  # interactive wizard
+python tools/convert/convert.py    # same, from tools hub
+
+python convert.py convert mediatek sd15 \
+  --model-path model.safetensors --model-name MyModel \
+  --clip-zip MyModel.zip           # CPU zip from app, or QNN zip
+```
+
+Docs: [tools/convert/README.md](tools/convert/README.md) · [conversion guide](https://ld-guide.chino.icu/conversion/)
+
 ## Credits & Acknowledgments
 
 Local Dream is built on top of many excellent open-source projects. Sincere thanks to all the authors and contributors whose work made this project possible.
 
 ### C++ Libraries
 
-- **[Qualcomm QNN SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)** - NPU model execution
+- **[Qualcomm QNN SDK](https://www.qualcomm.com/developer/software/qualcomm-ai-engine-direct-sdk)** - Qualcomm NPU model execution
+- **[Google LiteRT](https://github.com/google-ai-edge/LiteRT)** - MediaTek NPU model execution (NeuroPilot)
 - **[alibaba/MNN](https://github.com/alibaba/MNN/)** - CPU model execution
 - **[xtensor-stack](https://github.com/xtensor-stack)** - Tensor operations & scheduling
 - **[mlc-ai/tokenizers-cpp](https://github.com/mlc-ai/tokenizers-cpp)** - Text tokenization

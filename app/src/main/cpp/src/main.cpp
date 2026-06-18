@@ -12,8 +12,11 @@
 #include "MnnUtils.hpp"
 #include "Pipeline.hpp"
 #include "PipelineSd15Cpu.hpp"
+#include "PipelineSd15Mtk.hpp"
 #include "PipelineSd15Npu.hpp"
 #include "PipelineSdxl.hpp"
+#include "PipelineSdxlMtk.hpp"
+#include "MtkRuntime.hpp"
 #include "QnnRuntime.hpp"
 #include "RequestParser.hpp"
 #include "SDUtils.hpp"
@@ -31,20 +34,15 @@
 #include "httplib.h"
 #include "json.hpp"
 
-// The server runs exactly one of three fixed model formats, selected by
-// --type. Each format implies the full file layout under --model_dir, the
-// diffusion backend (MNN vs QNN), and the CLIP pipeline; nothing else is
-// configurable per component.
-//   sd15cpu: tokenizer.json clip_v2.mnn pos_emb.bin token_emb.bin
-//            unet.mnn vae_encoder.mnn vae_decoder.mnn
-//   sd15npu: tokenizer.json clip_v2.mnn pos_emb.bin token_emb.bin
-//            unet.bin vae_encoder.bin vae_decoder.bin [+resolution patches]
-//   sdxl:    tokenizer.json clip.mnn pos_emb.bin token_emb.bin clip_2.mnn
-//            pos_emb_2.bin token_emb_2.bin unet.bin vae_encoder.bin
-//            vae_decoder.bin
+// The server runs one of five fixed model formats, selected by --type.
+//   sd15cpu:  ... unet.mnn vae_encoder.mnn vae_decoder.mnn
+//   sd15npu:  ... unet.bin vae_encoder.bin vae_decoder.bin [+patches]
+//   sd15mtk:  ... unet.litert vae_encoder.litert vae_decoder.litert
+//   sdxl:     ... unet.bin vae_encoder.bin vae_decoder.bin
+//   sdxlmtk:  ... unet.litert vae_encoder.litert vae_decoder.litert
 // CLIP always runs on MNN (CPU) with precomputed token/pos embeddings.
 struct ServerOptions {
-  enum class ModelType { kSd15Cpu, kSd15Npu, kSdxl };
+  enum class ModelType { kSd15Cpu, kSd15Npu, kSd15Mtk, kSdxl, kSdxlMtk };
 
   int port = 8081;
   std::string listen_address = "127.0.0.1";
@@ -55,28 +53,36 @@ struct ServerOptions {
   std::string safety_checker_path;
   float nsfw_threshold = 0.5f;
   bool use_v_pred = false;
-  bool no_img2img = false;  // skip the VAE encoder entirely
+  bool no_img2img = false;
   bool lowram = false;
   bool upscaler_mode = false;
   bool convert_mode = false;
   bool convert_clip_skip_2 = false;
 
-  bool isSdxl() const { return type == ModelType::kSdxl; }
+  bool isSdxl() const {
+    return type == ModelType::kSdxl || type == ModelType::kSdxlMtk;
+  }
   bool isMnn() const { return type == ModelType::kSd15Cpu; }
+  bool isMtk() const {
+    return type == ModelType::kSd15Mtk || type == ModelType::kSdxlMtk;
+  }
+  bool isQnn() const {
+    return type == ModelType::kSd15Npu || type == ModelType::kSdxl;
+  }
 };
 
 static void showHelp() {
   std::cout
       << "Usage:\n"
-         "  stable_diffusion_core --type <sd15cpu|sd15npu|sdxl> "
+         "  stable_diffusion_core --type <sd15cpu|sd15npu|sd15mtk|sdxl|sdxlmtk> "
          "--model_dir <dir> [--lib_dir <dir>] [options]\n"
          "  stable_diffusion_core --upscaler_mode [--lib_dir <dir>] "
          "[options]\n"
          "  stable_diffusion_core --convert <dir> [--clip_skip_2]\n"
          "\n"
          "Modes:\n"
-         "  --type <type>          Model format: sd15cpu (MNN), sd15npu "
-         "(QNN), sdxl (QNN)\n"
+         "  --type <type>          Model format: sd15cpu (MNN), sd15npu (QNN), "
+         "sd15mtk (MediaTek), sdxl (QNN), sdxlmtk (MediaTek SDXL)\n"
          "  --upscaler_mode        Upscale-only server, no diffusion model\n"
          "  --convert <dir>        Convert model.safetensors in <dir> to MNN "
          "and exit\n"
@@ -84,8 +90,7 @@ static void showHelp() {
          "Paths:\n"
          "  --model_dir <dir>      Directory with the fixed per-type model "
          "files\n"
-         "  --lib_dir <dir>        Directory with libQnnHtp.so / "
-         "libQnnSystem.so (QNN types)\n"
+         "  --lib_dir <dir>        Directory with QNN or LiteRT runtime libs\n"
          "  --patch <file>         zstd resolution patch for unet.bin "
          "(sd15npu)\n"
          "  --safety_checker <f>   NSFW checker MNN model\n"
@@ -220,6 +225,10 @@ static ServerOptions processCommandLine(int argc, char **argv) {
     opts.type = ServerOptions::ModelType::kSd15Cpu;
   else if (typeStr == "sdxl")
     opts.type = ServerOptions::ModelType::kSdxl;
+  else if (typeStr == "sdxlmtk")
+    opts.type = ServerOptions::ModelType::kSdxlMtk;
+  else if (typeStr == "sd15mtk")
+    opts.type = ServerOptions::ModelType::kSd15Mtk;
   else if (typeStr == "sd15npu")
     opts.type = ServerOptions::ModelType::kSd15Npu;
   else
@@ -275,7 +284,13 @@ static std::unique_ptr<Pipeline> createPipeline(const ServerOptions &opts,
                                                 TextEncoder &text_encoder) {
   const std::filesystem::path dir(opts.model_dir);
   const bool sdxl = opts.isSdxl();
-  const std::string ext = opts.isMnn() ? ".mnn" : ".bin";
+  std::string ext;
+  if (opts.isMnn())
+    ext = ".mnn";
+  else if (opts.isMtk())
+    ext = ".litert";
+  else
+    ext = ".bin";
   std::string clip_path = (dir / (sdxl ? "clip.mnn" : "clip_v2.mnn")).string();
   std::string clip2_path = sdxl ? (dir / "clip_2.mnn").string() : "";
   std::string unet_path = (dir / ("unet" + ext)).string();
@@ -310,6 +325,14 @@ static std::unique_ptr<Pipeline> createPipeline(const ServerOptions &opts,
       return std::make_unique<PipelineSd15Npu>(
           text_encoder, opts.model_dir, clip_path, unet_path, vae_decoder_path,
           vae_encoder_path, opts.patch_path, opts.use_v_pred);
+    case ServerOptions::ModelType::kSd15Mtk:
+      return std::make_unique<PipelineSd15Mtk>(
+          text_encoder, opts.model_dir, clip_path, unet_path, vae_decoder_path,
+          vae_encoder_path, opts.use_v_pred);
+    case ServerOptions::ModelType::kSdxlMtk:
+      return std::make_unique<PipelineSdxlMtk>(
+          text_encoder, opts.model_dir, clip_path, clip2_path, unet_path,
+          vae_decoder_path, vae_encoder_path, opts.use_v_pred, opts.lowram);
     case ServerOptions::ModelType::kSdxl:
     default:
       return std::make_unique<PipelineSdxl>(
@@ -707,9 +730,14 @@ int main(int argc, char **argv) {
     }
 
     if (!opts.isMnn()) {
-      if (opts.lib_dir.empty()) showHelpAndExit("Missing --lib_dir for QNN");
-      if (!qnn_runtime::init(opts.lib_dir))
+      if (opts.lib_dir.empty())
+        showHelpAndExit("Missing --lib_dir for NPU backend");
+      if (opts.isMtk()) {
+        if (!mtk_runtime::init(opts.lib_dir))
+          showHelpAndExit("Failed to init MediaTek LiteRT runtime.");
+      } else if (!qnn_runtime::init(opts.lib_dir)) {
         showHelpAndExit("Failed get QNN system func ptrs.");
+      }
     }
 
     if (!pipeline->initialize()) {

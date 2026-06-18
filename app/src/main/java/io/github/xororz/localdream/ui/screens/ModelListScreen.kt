@@ -1038,7 +1038,7 @@ fun ModelListScreen(navController: NavController, modifier: Modifier = Modifier)
                         }
                     }
 
-                    if (page == 1 && Model.isQualcommDevice()) {
+                    if (page == 1 && Model.isNpuCapableDevice()) {
                         item {
                             AddCustomNpuModelButton(
                                 onClick = { showCustomNpuModelDialog = true },
@@ -2975,7 +2975,7 @@ suspend fun extractNpuModel(
             onProgress(context.getString(R.string.preparing_npu_model))
         }
 
-        if (!Model.isQualcommDevice()) {
+        if (!Model.isNpuCapableDevice()) {
             withContext(Dispatchers.Main) {
                 onError(context.getString(R.string.only_qualcomm_npu))
             }
@@ -3066,8 +3066,11 @@ suspend fun extractNpuModel(
         onByteProgress(extractedBytesAtomic.get(), totalCompressedBytes, 1f)
 
         if (modelId != "upscaler_anime" && modelId != "upscaler_realistic") {
-            val npuCustomFile = File(modelDir, "npucustom")
-            npuCustomFile.createNewFile()
+            val markerName = when (Model.getNpuVendor()) {
+                io.github.xororz.localdream.data.NpuVendor.MEDIATEK -> "mtkcustom"
+                else -> "npucustom"
+            }
+            File(modelDir, markerName).createNewFile()
         }
 
         withContext(Dispatchers.Main) {

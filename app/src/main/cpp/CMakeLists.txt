@@ -61,6 +61,28 @@ file(COPY ${QNN_SDK_ROOT}/lib/hexagon-v81/unsigned/libQnnHtpV81.so
 file(COPY ${QNN_SDK_ROOT}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so
     DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/qnnlibs)
 
+# LiteRT / MediaTek NPU (optional — set LITERT_SDK_ROOT to enable mtklibs bundling)
+set(LITERT_SDK_ROOT "" CACHE PATH "LiteRT SDK root with prebuilt Android libs")
+if(LITERT_SDK_ROOT AND EXISTS "${LITERT_SDK_ROOT}")
+    make_directory(${CMAKE_CURRENT_BINARY_DIR}/mtklibs)
+    set(MTK_LIB_DIR "${LITERT_SDK_ROOT}/libs/arm64-v8a")
+    if(EXISTS "${MTK_LIB_DIR}/libLiteRtRuntimeCApi.so")
+        file(COPY "${MTK_LIB_DIR}/libLiteRtRuntimeCApi.so"
+            DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/mtklibs)
+    endif()
+    if(EXISTS "${MTK_LIB_DIR}/libLiteRtDispatch_MediaTek.so")
+        file(COPY "${MTK_LIB_DIR}/libLiteRtDispatch_MediaTek.so"
+            DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/mtklibs)
+    endif()
+    if(EXISTS "${MTK_LIB_DIR}/libneuronusdk_adapter.mtk.so")
+        file(COPY "${MTK_LIB_DIR}/libneuronusdk_adapter.mtk.so"
+            DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/mtklibs)
+    endif()
+    message(STATUS "MediaTek LiteRT libs copied to mtklibs/")
+else()
+    message(STATUS "LITERT_SDK_ROOT not set — mtklibs will not be bundled (MTK NPU at runtime)")
+endif()
+
 if(WIN32)
     set(PLATFORM_NAME "windows")
     set(HOST_TAG "windows-x86_64")

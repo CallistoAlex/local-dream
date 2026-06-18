@@ -13,6 +13,12 @@ app/release
 app/basic
 app/filter
 app/src/main/assets/qnnlibs
+app/src/main/assets/mtklibs
+
+# NPU conversion tool
+tools/npu-convert/.venv/
+__pycache__/
+*.safetensors
 
 # Kotlin compiler session artifacts
 .kotlin/

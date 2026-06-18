@@ -100,6 +100,7 @@ object TempCleaner {
         // so a marker-less dir is an unusable, half-finished import.
         return File(entry, "finished").exists() ||
             File(entry, "npucustom").exists() ||
+            File(entry, "mtkcustom").exists() ||
             File(entry, "SDXL").exists()
     }
 

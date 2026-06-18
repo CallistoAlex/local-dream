@@ -73,7 +73,7 @@
     <string name="got_it">Got It!</string>
     <string name="yes">Yes</string>
     <string name="about_app">Note</string>
-    <string name="must_read">This APP supports running stable diffusion image generation on CPU/GPU and some Qualcomm NPUs.\n\nSD1.5 models are supported on Snapdragon NPUs with Hexagon V68 architecture or newer.\n\nSDXL models are supported on Snapdragon 8 Gen 3 and newer devices.\n\nIf your chip is outside the above scope, you can only run on CPU/GPU.\n\nThis project is open source at https://github.com/xororz/local-dream where you can view the source code or submit issues\n\nDocumentation: https://ld.chino.icu</string>
+    <string name="must_read">This APP supports running stable diffusion image generation on CPU/GPU, Qualcomm Snapdragon NPUs, and MediaTek Dimensity NPUs.\n\nSD1.5 models are supported on Snapdragon NPUs (Hexagon V68+) and MediaTek Dimensity 9400+ (MT6991).\n\nSDXL models are supported on Snapdragon 8 Gen 3+ and MediaTek Dimensity 9400+ devices.\n\nIf your chip is outside the above scope, you can only run on CPU/GPU.\n\nThis project is open source at https://github.com/xororz/local-dream where you can view the source code or submit issues\n\nDocumentation: https://ld.chino.icu</string>
     <string name="help">Help</string>
     <string name="more_options">More</string>
 
@@ -277,7 +277,7 @@
     <string name="file_selected">File Selected</string>
     <string name="add_model">Add Model</string>
     <string name="custom_model_hint">Only supports SD1.5 architecture safetensors model files</string>
-    <string name="custom_npu_model_hint">Select a ZIP file containing NPU model files. Only available on Qualcomm devices. You can find some models at https://huggingface.co/xororz/sd-qnn and https://huggingface.co/xororz/sdxl-qnn or elsewhere on Hugging Face.</string>
+    <string name="custom_npu_model_hint">Select a ZIP file containing NPU model files (.bin for Qualcomm, .litert for MediaTek). Qualcomm: https://huggingface.co/xororz/sd-qnn and https://huggingface.co/xororz/sdxl-qnn. MediaTek: https://huggingface.co/xororz/sd-mtk and https://huggingface.co/xororz/sdxl-mtk.</string>
     <string name="converting">Converting…</string>
     <string name="model_conversion_success">Model conversion successful!</string>
     <string name="model_conversion_failed">Conversion failed: %s</string>
@@ -434,7 +434,7 @@
     <string name="failed_to_start_backend">Failed to start backend: %s</string>
     <string name="executable_not_found">Executable not found: %s</string>
     <string name="cannot_open_file">Cannot open the selected file</string>
-    <string name="only_qualcomm_npu">Only Qualcomm devices support custom NPU models</string>
+    <string name="only_qualcomm_npu">Only NPU-capable devices (Qualcomm or MediaTek) support custom NPU models</string>
     <string name="conversion_need_sd15">Please use an SD1.5 safetensors model</string>
     <string name="converting_with_line">Converting: %s</string>
 
